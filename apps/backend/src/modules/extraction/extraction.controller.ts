@@ -58,16 +58,16 @@ export class ExtractionController {
                             /^(text\/plain|text\/csv|application\/json|application\/pdf|image\/(png|jpeg|webp))$/,
                     }),
                 ],
-                fileIsRequired: true,
+                fileIsRequired: false,
             }),
         )
-        file: Express.Multer.File,
-        @Body() _dto: UploadInvoiceDto, // eslint-disable-line @typescript-eslint/no-unused-vars
+        file: Express.Multer.File | undefined,
+        @Body() dto: UploadInvoiceDto,
     ): Promise<ExtractionResult> {
         this.logger.log(
-            `Received upload request: ${file.originalname} (${file.mimetype}, ${file.size} bytes)`,
+            `Received upload request: file=${file?.originalname ?? 'none'} text=${dto.text ? 'provided' : 'none'}`,
         );
 
-        return this.extractionService.processFile(file);
+        return this.extractionService.processFile(file, dto.text);
     }
 }

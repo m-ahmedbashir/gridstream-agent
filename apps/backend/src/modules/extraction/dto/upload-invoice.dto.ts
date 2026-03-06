@@ -26,6 +26,11 @@ export const UploadInvoiceSchema = z.object({
      * Free-text note from the uploader, surfaced in audit logs.
      */
     notes: z.string().max(500).optional(),
+
+    /**
+     * Raw text content provided directly via the UI text area.
+     */
+    text: z.string().optional(),
 });
 
 export class UploadInvoiceDto extends createZodDto(UploadInvoiceSchema) { }

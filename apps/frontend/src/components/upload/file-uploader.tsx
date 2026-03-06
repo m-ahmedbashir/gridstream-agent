@@ -11,17 +11,71 @@ import {
     IconFile,
     IconX,
     IconCheck,
-    IconAlertTriangle
+    IconAlertTriangle,
+    IconTextCaption
 } from '@tabler/icons-react';
+import { toast } from 'sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import type { Invoice } from '@opp/shared';
+
+export interface ExtractionResult {
+    originalFileName: string;
+    mimeType: string;
+    maskedText: string;
+    piiDetected: boolean;
+    geminiResponse: Invoice;
+    processedAt: string;
+}
 
 // ---------------------------------------------------------------------------
-// Placeholder — swap this out for a real fetch() call to your NestJS backend
+// HTTP Extraction Service Call
 // ---------------------------------------------------------------------------
-async function uploadInvoice(file: File): Promise<void> {
-    console.log('[uploadInvoice] uploading:', file.name, file.size, 'bytes');
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 1800));
-    console.log('[uploadInvoice] done:', file.name);
+async function uploadInvoice(file?: File, text?: string): Promise<ExtractionResult> {
+    const formData = new FormData();
+    if (file) formData.append('file', file);
+    if (text) formData.append('text', text);
+
+    const itemName = file ? file.name : 'pasted text';
+
+    const response = await fetch('http://localhost:3001/extraction/upload', {
+        method: 'POST',
+        body: formData
+    });
+
+    if (!response.ok) {
+        if (response.status === 413) {
+            toast.error(`Payload too large: ${itemName}`);
+            throw new Error('Payload exceeds 10MB limit');
+        }
+        if (response.status === 415) {
+            toast.error(`Unsupported representation: ${itemName}`);
+            throw new Error('Unsupported format');
+        }
+
+        // Attempt to parse NestJS structured error message
+        let errorMessage = `Server responded with ${response.status}`;
+        try {
+            const errorData = await response.json();
+            if (errorData && errorData.message) {
+                errorMessage = errorData.message;
+            }
+        } catch (_) {
+            // Ignore parse errors
+        }
+
+        if (response.status === 429) {
+            toast.error(errorMessage || 'Quota Exceeded: Gemini API limits reached.');
+            throw new Error(errorMessage || 'API Quota Exceeded');
+        }
+
+        toast.error(`Upload failed: ${itemName}`);
+        throw new Error(errorMessage);
+    }
+
+    const data = (await response.json()) as ExtractionResult;
+    toast.success(`Extracted data for ${itemName}`);
+    return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,24 +143,36 @@ function FileUploaderCard({ item }: { item: UploadedFile }) {
 // ---------------------------------------------------------------------------
 export function FileUploader() {
     const [files, setFiles] = useState<UploadedFile[]>([]);
+    const [pastedText, setPastedText] = useState('');
     const [globalState, setGlobalState] = useState<UploadState>('idle');
 
-    const processFiles = useCallback(async (accepted: File[]) => {
-        if (accepted.length === 0) return;
+    const handleUploadClick = useCallback(async () => {
+        const queue = files.filter((f) => f.state === 'idle' || f.state === 'error');
 
-        const newEntries: UploadedFile[] = accepted.map((file) => ({
-            file,
-            state: 'uploading',
-            progress: 0
-        }));
+        // If there are no files but there is text, upload just the text
+        if (queue.length === 0 && pastedText.trim().length > 0) {
+            setGlobalState('uploading');
+            try {
+                await uploadInvoice(undefined, pastedText);
+                setGlobalState('success');
+            } catch (err) {
+                setGlobalState('error');
+            }
+            return;
+        }
 
-        setFiles((prev) => [...prev, ...newEntries]);
+        if (queue.length === 0) return;
+
         setGlobalState('uploading');
 
-        // Upload each file independently so progress is per-file
+        // Mark queued files as uploading
+        setFiles((prev) =>
+            prev.map((f) => (queue.some((q) => q.file === f.file) ? { ...f, state: 'uploading', progress: 0 } : f))
+        );
+
         const results = await Promise.allSettled(
-            accepted.map(async (file, idx) => {
-                // Fake incremental progress ticks
+            queue.map(async (item) => {
+                const { file } = item;
                 const tickInterval = setInterval(() => {
                     setFiles((prev) =>
                         prev.map((f) =>
@@ -118,7 +184,7 @@ export function FileUploader() {
                 }, 300);
 
                 try {
-                    await uploadInvoice(file);
+                    await uploadInvoice(file, pastedText);
                     clearInterval(tickInterval);
                     setFiles((prev) =>
                         prev.map((f) =>
@@ -146,22 +212,29 @@ export function FileUploader() {
 
         const anyError = results.some((r) => r.status === 'rejected');
         setGlobalState(anyError ? 'error' : 'success');
-    }, []);
+    }, [files, pastedText]);
 
     const onDrop = useCallback(
         (accepted: File[], rejected: FileRejection[]) => {
-            if (rejected.length > 0) {
-                const errorEntries: UploadedFile[] = rejected.map(({ file, errors }) => ({
-                    file,
-                    state: 'error',
-                    progress: 0,
-                    errorMessage: errors[0]?.message ?? 'Rejected'
-                }));
-                setFiles((prev) => [...prev, ...errorEntries]);
+            const errorEntries: UploadedFile[] = rejected.map(({ file, errors }) => ({
+                file,
+                state: 'error',
+                progress: 0,
+                errorMessage: errors[0]?.message ?? 'Rejected'
+            }));
+
+            const newEntries: UploadedFile[] = accepted.map((file) => ({
+                file,
+                state: 'idle',
+                progress: 0
+            }));
+
+            setFiles((prev) => [...prev, ...errorEntries, ...newEntries]);
+            if (globalState === 'success' || globalState === 'error') {
+                setGlobalState('idle'); // Reset global state when new files are added
             }
-            processFiles(accepted);
         },
-        [processFiles]
+        [globalState]
     );
 
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -180,6 +253,7 @@ export function FileUploader() {
 
     function clearAll() {
         setFiles([]);
+        setPastedText('');
         setGlobalState('idle');
     }
 
@@ -187,93 +261,161 @@ export function FileUploader() {
 
     return (
         <div className='space-y-4'>
-            {/* Drop zone */}
-            <Card>
-                <CardContent className='p-0'>
-                    <div
-                        {...getRootProps()}
-                        className={cn(
-                            'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-12 text-center transition-colors',
-                            isDragActive
-                                ? 'border-primary bg-primary/5'
-                                : 'border-border hover:border-primary/50 hover:bg-muted/40',
-                            isUploading && 'pointer-events-none opacity-60'
-                        )}
-                    >
-                        <input {...getInputProps()} />
-                        <div
-                            className={cn(
-                                'flex h-14 w-14 items-center justify-center rounded-full transition-colors',
-                                isDragActive ? 'bg-primary/10' : 'bg-muted'
-                            )}
-                        >
-                            <IconUpload
+            <Tabs defaultValue='file' className='w-full'>
+                <TabsList className='grid w-full grid-cols-2'>
+                    <TabsTrigger value='file'>File Upload</TabsTrigger>
+                    <TabsTrigger value='text'>Paste Text</TabsTrigger>
+                </TabsList>
+                <TabsContent value='file' className='mt-4'>
+                    {/* Drop zone */}
+                    <Card>
+                        <CardContent className='p-0'>
+                            <div
+                                {...getRootProps()}
                                 className={cn(
-                                    'h-6 w-6 transition-colors',
-                                    isDragActive ? 'text-primary' : 'text-muted-foreground'
+                                    'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-12 text-center transition-colors',
+                                    isDragActive
+                                        ? 'border-primary bg-primary/5'
+                                        : 'border-border hover:border-primary/50 hover:bg-muted/40',
+                                    isUploading && 'pointer-events-none opacity-60'
                                 )}
-                            />
-                        </div>
-
-                        {isDragActive ? (
-                            <p className='text-sm font-medium text-primary'>
-                                Drop your invoices here…
-                            </p>
-                        ) : (
-                            <>
-                                <div className='space-y-1'>
-                                    <p className='text-sm font-medium'>
-                                        Drag &amp; drop invoices, or{' '}
-                                        <span className='text-primary underline-offset-2 hover:underline'>
-                                            click to browse
-                                        </span>
-                                    </p>
-                                    <p className='text-xs text-muted-foreground'>
-                                        PDF, PNG, JPG, XLSX, CSV — up to 10 MB each
-                                    </p>
+                            >
+                                <input {...getInputProps()} />
+                                <div
+                                    className={cn(
+                                        'flex h-14 w-14 items-center justify-center rounded-full transition-colors',
+                                        isDragActive ? 'bg-primary/10' : 'bg-muted'
+                                    )}
+                                >
+                                    <IconUpload
+                                        className={cn(
+                                            'h-6 w-6 transition-colors',
+                                            isDragActive ? 'text-primary' : 'text-muted-foreground'
+                                        )}
+                                    />
                                 </div>
-                            </>
-                        )}
-                    </div>
-                </CardContent>
-            </Card>
 
-            {/* File list */}
-            {files.length > 0 && (
-                <div className='space-y-2'>
-                    <div className='flex items-center justify-between'>
-                        <p className='text-sm font-medium text-muted-foreground'>
-                            {files.length} file{files.length > 1 ? 's' : ''}
+                                {isDragActive ? (
+                                    <p className='text-sm font-medium text-primary'>
+                                        Drop your invoices here…
+                                    </p>
+                                ) : (
+                                    <>
+                                        <div className='space-y-1'>
+                                            <p className='text-sm font-medium'>
+                                                Drag &amp; drop invoices, or{' '}
+                                                <span className='text-primary underline-offset-2 hover:underline'>
+                                                    click to browse
+                                                </span>
+                                            </p>
+                                            <p className='text-xs text-muted-foreground'>
+                                                PDF, PNG, JPG, XLSX, CSV — up to 10 MB each
+                                            </p>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* File list */}
+                    {files.length > 0 && (
+                        <div className='mt-4 space-y-2'>
+                            <div className='flex items-center justify-between'>
+                                <p className='text-sm font-medium text-muted-foreground'>
+                                    {files.length} file{files.length > 1 ? 's' : ''}
+                                </p>
+                                <div className='flex items-center gap-2'>
+                                    <Button
+                                        size='sm'
+                                        onClick={handleUploadClick}
+                                        disabled={isUploading || !files.some((f) => f.state === 'idle' || f.state === 'error')}
+                                        className='h-7 px-3 text-xs'
+                                    >
+                                        <IconUpload className='mr-1.5 h-3.5 w-3.5' />
+                                        Upload{files.filter((f) => f.state === 'idle' || f.state === 'error').length > 0 ? ` ${files.filter((f) => f.state === 'idle' || f.state === 'error').length}` : ''}
+                                    </Button>
+                                    <Button
+                                        variant='ghost'
+                                        size='sm'
+                                        onClick={clearAll}
+                                        disabled={isUploading}
+                                        className='h-7 gap-1 px-2 text-xs text-muted-foreground'
+                                    >
+                                        <IconX className='h-3.5 w-3.5' />
+                                        Clear all
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className='space-y-2'>
+                                {files.map((item, i) => (
+                                    <FileUploaderCard key={`${item.file.name}-${i}`} item={item} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </TabsContent>
+                <TabsContent value='text' className='mt-4 space-y-4'>
+                    <div className='flex flex-col gap-3'>
+                        <div className='flex items-center gap-2 text-sm font-medium text-foreground'>
+                            <IconTextCaption className='h-5 w-5 text-muted-foreground' />
+                            Paste Invoice Content
+                        </div>
+                        <p className='text-xs text-muted-foreground'>
+                            Copy and paste your raw JSON, CSV, or pure text invoice blocks here. We will apply normal PII extraction before processing.
                         </p>
-                        <Button
-                            variant='ghost'
-                            size='sm'
-                            onClick={clearAll}
+                        <Textarea
+                            placeholder='Paste your text here...'
+                            className='min-h-[250px] resize-none font-mono text-sm shadow-sm'
+                            value={pastedText}
+                            onChange={(e) => setPastedText(e.target.value)}
                             disabled={isUploading}
-                            className='h-7 gap-1 px-2 text-xs text-muted-foreground'
-                        >
-                            <IconX className='h-3.5 w-3.5' />
-                            Clear all
-                        </Button>
+                        />
+                        <div className='flex items-center justify-end gap-2'>
+                            <Button
+                                variant='ghost'
+                                size='sm'
+                                onClick={clearAll}
+                                disabled={isUploading || !pastedText}
+                                className='h-8 gap-1 px-3 text-xs'
+                            >
+                                <IconX className='h-3.5 w-3.5' />
+                                Clear text
+                            </Button>
+                            <Button
+                                size='sm'
+                                onClick={handleUploadClick}
+                                disabled={isUploading || !pastedText.trim()}
+                                className='h-8 px-4 text-xs'
+                            >
+                                {isUploading ? (
+                                    <>Processing...</>
+                                ) : (
+                                    <>
+                                        <IconUpload className='mr-1.5 h-3.5 w-3.5' />
+                                        Extract Text Data
+                                    </>
+                                )}
+                            </Button>
+                        </div>
                     </div>
+                </TabsContent>
+            </Tabs>
 
-                    <div className='space-y-2'>
-                        {files.map((item, i) => (
-                            <FileUploaderCard key={`${item.file.name}-${i}`} item={item} />
-                        ))}
-                    </div>
-
-                    {/* Global status banner */}
+            {/* Global status banner */}
+            {(globalState === 'success' || globalState === 'error') && (
+                <div className='mt-4'>
                     {globalState === 'success' && (
                         <div className='flex items-center gap-2 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 dark:bg-green-950/30 dark:text-green-400'>
                             <IconCheck className='h-4 w-4 shrink-0' />
-                            All files uploaded successfully.
+                            Extraction completed successfully.
                         </div>
                     )}
                     {globalState === 'error' && (
                         <div className='flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive'>
                             <IconAlertTriangle className='h-4 w-4 shrink-0' />
-                            Some files failed to upload. Check the errors above.
+                            Some data failed to process. Check the errors above.
                         </div>
                     )}
                 </div>
