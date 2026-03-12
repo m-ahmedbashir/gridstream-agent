@@ -2,16 +2,27 @@
   "name": "@opp/shared",
   "version": "1.0.0",
   "description": "Shared types and utilities for the opp-agent monorepo",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.30.3"
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }
