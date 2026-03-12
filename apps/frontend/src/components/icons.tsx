@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconCloudUpload,
   IconCommand,
   IconCreditCard,
   IconFile,
@@ -79,5 +80,6 @@ export const Icons = {
   pro: IconCrown,
   exclusive: IconStar,
   account: IconUserCircle,
-  profile: IconUser
+  profile: IconUser,
+  upload: IconCloudUpload
 };
