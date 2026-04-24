@@ -1,5 +1,5 @@
 import { groq } from '@ai-sdk/groq';
-import { streamText, tool } from 'ai';
+import { convertToModelMessages, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { auth } from '@clerk/nextjs/server';
 
@@ -9,6 +9,7 @@ export const maxDuration = 30;
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
+    const modelMessages = await convertToModelMessages(messages ?? []);
     
     // Authenticate the user calling the chat
     const { userId } = await auth();
@@ -18,7 +19,7 @@ export async function POST(req: Request) {
       model: groq('llama-3.3-70b-versatile'), // High-performance tool-use model
       system: `You are an intelligent, helpful financial assistant answering questions about the user's uploaded invoices. 
 If the user asks questions about their invoices, use the \`getInvoices\` tool to fetch their data from the database first, then carefully answer their question using only the fetched data. Be concise and professional.`,
-      messages,
+      messages: modelMessages,
       // @ts-ignore - Support maxSteps in tools for newer runtime
       maxSteps: 3, 
       tools: {
@@ -43,8 +44,7 @@ If the user asks questions about their invoices, use the \`getInvoices\` tool to
       },
     });
 
-    // @ts-ignore fallback to whatever stream response the installed engine version uses
-    return result.toDataStreamResponse ? result.toDataStreamResponse() : result.toTextStreamResponse();
+    return result.toUIMessageStreamResponse();
   } catch (error) {
     console.error('Chat AI Error:', error);
     return new Response(JSON.stringify({ error: 'Failed to process AI request' }), { status: 500 });
