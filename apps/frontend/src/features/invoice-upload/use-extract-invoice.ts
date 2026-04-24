@@ -1,0 +1,73 @@
+import { useMutation } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import type { Invoice } from '@opp/shared';
+
+export interface ExtractionResult {
+    originalFileName: string;
+    mimeType: string;
+    maskedText: string;
+    piiDetected: boolean;
+    geminiResponse: Invoice;
+    processedAt: string;
+}
+
+export type ExtractInvoiceVariables = {
+    file?: File;
+    text?: string;
+};
+
+async function uploadInvoiceRequest(variables: ExtractInvoiceVariables): Promise<ExtractionResult> {
+    const { file, text } = variables;
+    const formData = new FormData();
+    if (file) formData.append('file', file);
+    if (text) formData.append('text', text);
+
+    const itemName = file ? file.name : 'pasted text';
+
+    const response = await fetch('http://localhost:3001/extraction/upload', {
+        method: 'POST',
+        body: formData
+    });
+
+    if (!response.ok) {
+        if (response.status === 413) {
+            throw new Error(`Payload exceeds 10MB limit: ${itemName}`);
+        }
+        if (response.status === 415) {
+            throw new Error(`Unsupported format: ${itemName}`);
+        }
+
+        let errorMessage = `Server responded with ${response.status}`;
+        try {
+            const errorData = await response.json();
+            if (errorData && errorData.message) {
+                errorMessage = errorData.message;
+            }
+        } catch (_) {
+            // Ignore parse errors
+        }
+
+        if (response.status === 429) {
+            throw new Error(errorMessage || 'API Quota Exceeded');
+        }
+
+        throw new Error(errorMessage);
+    }
+
+    const data = (await response.json()) as ExtractionResult;
+    return data;
+}
+
+export function useExtractInvoice() {
+    return useMutation({
+        mutationFn: uploadInvoiceRequest,
+        onSuccess: (_, variables) => {
+            const itemName = variables.file ? variables.file.name : 'pasted text';
+            toast.success(`Extracted data for ${itemName}`);
+        },
+        onError: (error, variables) => {
+            const itemName = variables.file ? variables.file.name : 'pasted text';
+            toast.error(error instanceof Error ? error.message : `Upload failed for ${itemName}`);
+        }
+    });
+}
