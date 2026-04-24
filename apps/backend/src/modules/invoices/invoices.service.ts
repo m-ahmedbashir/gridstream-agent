@@ -42,4 +42,13 @@ export class InvoicesService {
       },
     });
   }
+
+  async getInvoicesByUser(userId: string) {
+    return this.prisma.invoice.findMany({
+      where: {
+        user: { clerkId: userId }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
 }
