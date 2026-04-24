@@ -5,6 +5,7 @@ import type { Invoice } from '@opp/shared';
 export type SaveInvoiceVariables = {
     invoiceData: Invoice;
     userId: string;
+    invoiceId?: string;
 };
 
 async function saveInvoiceRequest(variables: SaveInvoiceVariables) {
