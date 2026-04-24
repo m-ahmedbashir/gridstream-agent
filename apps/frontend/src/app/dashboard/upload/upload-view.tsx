@@ -9,11 +9,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { IconUpload, IconX, IconTextCaption } from '@tabler/icons-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useSettings, type ExtractionMode } from '@/features/extraction-settings/hooks/useSettings';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 
 export function UploadView() {
     const [files, setFiles] = useState<File[]>([]);
     const [pastedText, setPastedText] = useState('');
     const [results, setResults] = useState<ExtractionResultData[]>([]);
+
+    const { settings, updateSettings, loading: settingsLoading } = useSettings();
 
     const { mutateAsync: extractInvoice, isPending } = useExtractInvoice();
 
@@ -43,7 +48,27 @@ export function UploadView() {
     };
 
     return (
-        <div className="space-y-8 pb-10">
+        <div className="space-y-6 pb-10">
+            <div className="flex items-center justify-between p-4 bg-muted/40 border rounded-lg">
+                <div className="space-y-1">
+                    <Label className="text-sm font-semibold">Extraction Workflow</Label>
+                    <p className="text-xs text-muted-foreground">Select how extracted invoice data is handled.</p>
+                </div>
+                <Select 
+                    value={settings?.extractionMode || 'MANUAL_REVIEW'} 
+                    onValueChange={(val) => updateSettings(val as ExtractionMode)}
+                    disabled={settingsLoading || isPending}
+                >
+                    <SelectTrigger className="w-[180px] h-9 text-xs bg-white dark:bg-zinc-950">
+                        <SelectValue placeholder="Select mode..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="MANUAL_REVIEW" className="text-xs">Manual Review</SelectItem>
+                        <SelectItem value="AUTO_APPROVE" className="text-xs">Auto-Approve</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+
             <Tabs defaultValue="file" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="file">File Upload</TabsTrigger>

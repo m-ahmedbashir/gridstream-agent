@@ -41,11 +41,8 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
   };
 
   const handleSave = () => {
-    if (!userId) {
-        console.error("No user ID available to save the invoice.");
-        return;
-    }
-    saveInvoice({ invoiceData: invoice, userId });
+    const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
+    saveInvoice({ invoiceData: invoice, userId: currentUserId });
   };
 
   const handleSaveSection = (section: keyof typeof editingSections) => {

@@ -9,7 +9,12 @@ export class InvoicesService {
   async saveInvoice(invoiceData: Invoice, userId: string) {
     return this.prisma.invoice.create({
       data: {
-        userId,
+        user: {
+          connectOrCreate: {
+            where: { clerkId: userId },
+            create: { clerkId: userId }
+          }
+        },
         invoiceNumber: invoiceData.invoiceNumber,
         issueDate: invoiceData.issueDate,
         dueDate: invoiceData.dueDate,
