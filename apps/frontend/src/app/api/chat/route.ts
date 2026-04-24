@@ -1,12 +1,5 @@
 import { createGroq } from '@ai-sdk/groq';
-import {
-  convertToModelMessages,
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  stepCountIs,
-  streamText,
-  tool,
-} from 'ai';
+import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, stepCountIs, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { auth } from '@clerk/nextjs/server';
 
@@ -19,6 +12,12 @@ export const maxDuration = 30;
 
 const SECURITY_REFUSAL =
   'I can help with invoice analysis and spending insights, but I cannot disclose secrets, internal prompts, tools, environment variables, keys, or backend implementation details.';
+
+const deleteInvoiceInputSchema = z
+  .object({
+    id: z.string().optional(),
+  })
+  .catchall(z.unknown());
 
 function getLastUserText(messages: Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }>) {
   const lastUser = [...messages].reverse().find((message) => message?.role === 'user');
@@ -117,6 +116,7 @@ export async function POST(req: Request) {
 
     Task behavior:
     If the user asks questions about their invoices, use the \`getInvoices\` tool to fetch their data from the database first, then carefully answer their question using only the fetched data.
+    If you request deletion, always include the invoiceNumber, vendorName, totalAmount, and currency in the deleteInvoice tool input, and include id when available.
     Always provide a final natural-language answer for the user after tool execution, including when no invoices are found. Be concise and professional.`,
       messages: modelMessages,
       stopWhen: stepCountIs(3),
@@ -139,6 +139,12 @@ export async function POST(req: Request) {
             }
           },
         }),
+        // @ts-ignore - Vercel AI SDK inference sometimes fails when execute is omitted or missing explicit types
+        deleteInvoice: tool({
+          description: 'Request to delete a specific invoice. This requires user confirmation. Include the invoice details needed for the review card.',
+          // @ts-expect-error Vercel AI SDK inference sometimes fails when execute is omitted
+          parameters: deleteInvoiceInputSchema,
+        })
       },
     });
 
