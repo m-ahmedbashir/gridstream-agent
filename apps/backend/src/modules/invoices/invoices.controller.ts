@@ -7,7 +7,7 @@ export class InvoicesController {
   constructor(private invoicesService: InvoicesService) {}
 
   @Post('save')
-  async save(@Body() body: { invoiceData: Invoice; userId: string }) {
-    return this.invoicesService.saveInvoice(body.invoiceData, body.userId);
+  async save(@Body() body: { invoiceData: Invoice; userId: string; invoiceId?: string }) {
+    return this.invoicesService.saveInvoice(body.invoiceData, body.userId, body.invoiceId);
   }
 }

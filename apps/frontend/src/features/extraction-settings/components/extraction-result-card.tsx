@@ -27,6 +27,7 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
 
   const initialInvoiceData = data.result.geminiResponse;
   const [invoice, setInvoice] = useState<Invoice>(initialInvoiceData);
+  const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(null);
 
   const [editingSections, setEditingSections] = useState({
     details: false,
@@ -42,7 +43,16 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
 
   const handleSave = () => {
     const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
-    saveInvoice({ invoiceData: invoice, userId: currentUserId });
+    saveInvoice(
+        { invoiceData: invoice, userId: currentUserId, invoiceId: savedInvoiceId || undefined },
+        {
+            onSuccess: (data) => {
+                if (data && data.id) {
+                    setSavedInvoiceId(data.id);
+                }
+            }
+        }
+    );
   };
 
   const handleSaveSection = (section: keyof typeof editingSections) => {

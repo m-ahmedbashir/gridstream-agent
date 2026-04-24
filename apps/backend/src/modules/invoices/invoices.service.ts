@@ -6,15 +6,8 @@ import { Invoice } from '@opp/shared';
 export class InvoicesService {
   constructor(private prisma: PrismaService) {}
 
-  async saveInvoice(invoiceData: Invoice, userId: string) {
-    return this.prisma.invoice.create({
-      data: {
-        user: {
-          connectOrCreate: {
-            where: { clerkId: userId },
-            create: { clerkId: userId }
-          }
-        },
+  async saveInvoice(invoiceData: Invoice, userId: string, invoiceId?: string) {
+    const dataPayload = {
         invoiceNumber: invoiceData.invoiceNumber,
         issueDate: invoiceData.issueDate,
         dueDate: invoiceData.dueDate,
@@ -28,6 +21,24 @@ export class InvoicesService {
         currency: invoiceData.currency,
         lineItems: invoiceData.lineItems as any,
         status: 'APPROVED',
+    };
+
+    if (invoiceId) {
+      return this.prisma.invoice.update({
+        where: { id: invoiceId },
+        data: dataPayload,
+      });
+    }
+
+    return this.prisma.invoice.create({
+      data: {
+        user: {
+          connectOrCreate: {
+            where: { clerkId: userId },
+            create: { clerkId: userId }
+          }
+        },
+        ...dataPayload
       },
     });
   }
