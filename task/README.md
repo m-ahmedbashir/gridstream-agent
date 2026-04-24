@@ -11,8 +11,8 @@
 
 | Phase | Focus | Status | Files |
 |-------|-------|--------|-------|
-| **Phase 1** | Database Setup (Prisma + Schema) | 🟡 80% (DB created) | `task/phase1.md` |
-| **Phase 2** | Backend Modules (Invoices + Users) | ⏳ PENDING | `task/phase2.md` |
+| **Phase 1** | Database Setup (Prisma + Schema) | ✅ COMPLETE | `task/phase1.md` |
+| **Phase 2** | Backend Modules (Invoices + Users) | 🔄 IN PROGRESS | `task/phase2.md` |
 | **Phase 3** | Frontend Settings Feature | ⏳ PENDING | `task/phase3.md` |
 | **Phase 4** | Frontend HITL Review Component | ⏳ PENDING | `task/phase4.md` |
 | **Phase 5** | Integration + Testing | ⏳ PENDING | `task/phase5.md` |
