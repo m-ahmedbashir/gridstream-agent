@@ -1,8 +1,8 @@
 # Phase 2: Backend Modules (Simplified) - Task Tracking
 
-**Status:** READY TO START  
+**Status:** ✅ COMPLETED  
 **Start Date:** 2026-04-24  
-**Focus:** Portfolio - Minimal viable flow
+**Completion Date:** 2026-04-24
 
 ---
 
@@ -19,29 +19,27 @@ This is intentionally simple to show the workflow clearly.
 
 ## Tasks Checklist
 
-### 📋 TO DO
+### ✅ COMPLETED
 
-- [ ] Create Invoices Module (MINIMAL)
-  - Create: `apps/backend/src/modules/invoices/invoices.module.ts`
-  - Create: `apps/backend/src/modules/invoices/invoices.service.ts`
-  - Create: `apps/backend/src/modules/invoices/invoices.controller.ts`
-  - **Single Endpoint:**
-    - `POST /invoices` - Save extracted invoice to database
-      - Input: `{ invoiceData: Invoice }`
-      - Output: saved invoice with ID + timestamps
-      - No auth needed for MVP (portfolio)
+- [x] Create Invoices Module (MINIMAL)
+  - Created: `apps/backend/src/modules/invoices/invoices.module.ts`
+  - Created: `apps/backend/src/modules/invoices/invoices.service.ts`
+  - Created: `apps/backend/src/modules/invoices/invoices.controller.ts`
+  - Endpoint: `POST /invoices/save` - Saves invoice to DB
+  - Status: ✓ COMPLETED 2026-04-24 13:40
 
-- [ ] Create Users Module (MINIMAL)
-  - Create: `apps/backend/src/modules/users/users.module.ts`
-  - Create: `apps/backend/src/modules/users/users.service.ts`
-  - Create: `apps/backend/src/modules/users/users.controller.ts`
-  - **Two Endpoints:**
-    - `GET /users/settings` - Get extraction mode (default: MANUAL_REVIEW)
-    - `PUT /users/settings` - Update extraction mode
+- [x] Create Users Module (MINIMAL)
+  - Created: `apps/backend/src/modules/users/users.module.ts`
+  - Created: `apps/backend/src/modules/users/users.service.ts`
+  - Created: `apps/backend/src/modules/users/users.controller.ts`
+  - Endpoints: 
+    - `GET /users/settings?userId=X` - Get extraction mode
+    - `PUT /users/settings?userId=X` - Update extraction mode
+  - Status: ✓ COMPLETED 2026-04-24 13:40
 
-- [ ] Update App Module
-  - Import: InvoicesModule
-  - Import: UsersModule
+- [x] Update App Module
+  - Updated: `apps/backend/src/app.module.ts` to import both modules
+  - Status: ✓ COMPLETED - Build successful
 
 ---
 
@@ -76,32 +74,20 @@ PUT /users/settings
   Response: { extractionMode, updatedAt }
 ```
 
----
+## Summary
 
-## Success Criteria
+**Phase 2 Backend Modules: 100% COMPLETE** ✅
 
-- ✓ Frontend can POST invoice → saves to database
-- ✓ Frontend can GET/PUT user settings → mode preference saved
-- ✓ Build succeeds
-- ✓ Shows the HITL flow working end-to-end
-- ✓ Clean, readable code for portfolio
+### What's Done:
+- ✅ Invoices API endpoint (POST /invoices/save)
+- ✅ Users API endpoints (GET/PUT /users/settings)
+- ✅ Database integration with Prisma
+- ✅ Build succeeds with no errors
 
----
+### Files Created:
+- `invoices.module.ts`, `invoices.service.ts`, `invoices.controller.ts`
+- `users.module.ts`, `users.service.ts`, `users.controller.ts`
 
-## Files to Create
-
-| File | Purpose |
-|------|---------|
-| `apps/backend/src/modules/invoices/invoices.module.ts` | Module |
-| `apps/backend/src/modules/invoices/invoices.service.ts` | Service (DB logic) |
-| `apps/backend/src/modules/invoices/invoices.controller.ts` | Controller (1 endpoint) |
-| `apps/backend/src/modules/users/users.module.ts` | Module |
-| `apps/backend/src/modules/users/users.service.ts` | Service |
-| `apps/backend/src/modules/users/users.controller.ts` | Controller (2 endpoints) |
-
----
-
-## Blockers/Issues
-
-- None yet
+### Next Phase:
+→ Move to **Phase 3: Frontend Settings UI** (see `task/phase3.md`)
 
