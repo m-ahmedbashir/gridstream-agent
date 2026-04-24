@@ -1,6 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@clerk/nextjs';
+import { useSaveInvoice } from '@/features/invoice-upload/use-save-invoice';
+import { IconDeviceFloppy, IconPencil, IconCheck } from '@tabler/icons-react';
 import type { Invoice } from '@opp/shared';
 
 export interface ExtractionResultData {
@@ -15,19 +21,58 @@ export interface ExtractionResultData {
   };
 }
 
-/**
- * Stateless component to display extracted invoice data
- * Shows image on left, extracted details on right
- */
 export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
+  const { userId } = useAuth();
+  const { mutate: saveInvoice, isPending } = useSaveInvoice();
+
+  const initialInvoiceData = data.result.geminiResponse;
+  const [invoice, setInvoice] = useState<Invoice>(initialInvoiceData);
+
+  const [editingSections, setEditingSections] = useState({
+    details: false,
+    vendor: false,
+    customer: false,
+    summary: false,
+    lineItems: false
+  });
+
+  const toggleEdit = (section: keyof typeof editingSections) => {
+    setEditingSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const handleSave = () => {
+    if (!userId) {
+        console.error("No user ID available to save the invoice.");
+        return;
+    }
+    saveInvoice({ invoiceData: invoice, userId });
+  };
+
+  const handleSaveSection = (section: keyof typeof editingSections) => {
+    toggleEdit(section);
+    handleSave();
+  };
+
+  const handleChange = (field: keyof Invoice, value: string | number) => {
+    setInvoice(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleLineItemChange = (index: number, field: string, value: string | number) => {
+    setInvoice(prev => {
+        const newLineItems = [...(prev.lineItems || [])];
+        newLineItems[index] = { ...newLineItems[index], [field]: value };
+        return { ...prev, lineItems: newLineItems };
+    });
+  };
+
   return (
     <Card className='overflow-hidden'>
       <CardContent className='p-0'>
         <div className='grid grid-cols-2 gap-0 min-h-screen'>
           {/* Left Column: Invoice Image */}
-          {data.file && (
+          {data.file ? (
             <div className='flex items-center justify-center bg-muted p-4'>
-              <div className='w-full h-full flex items-center justify-center rounded-lg border bg-white'>
+              <div className='w-full max-h-[90vh] flex items-center justify-center rounded-lg border bg-white overflow-hidden'>
                 <img
                   src={URL.createObjectURL(data.file)}
                   alt='Uploaded invoice'
@@ -35,97 +80,243 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 />
               </div>
             </div>
+          ) : (
+             <div className='flex items-center justify-center bg-muted p-4'>
+                <p className="text-muted-foreground text-sm">No preview available</p>
+             </div>
           )}
 
           {/* Right Column: Extracted Data */}
-          <div className='space-y-4 p-6 overflow-y-auto max-h-screen flex flex-col'>
-            <div>
-              <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                Invoice Details
-              </p>
+          <div className='space-y-6 p-6 overflow-y-auto max-h-[90vh] flex flex-col'>
+            
+            {/* GLOBAL ACTIONS */}
+            <div className="flex items-center justify-between pb-2 border-b">
+               <h3 className="text-lg font-semibold">Extracted Data</h3>
+               <Button onClick={handleSave} disabled={isPending} className="gap-2 shrink-0">
+                 <IconDeviceFloppy className="w-4 h-4" />
+                 {isPending ? 'Saving...' : 'Save Invoice'}
+               </Button>
             </div>
 
-            <div className='grid grid-cols-2 gap-4'>
-              <div>
-                <p className='text-xs font-medium text-muted-foreground'>Invoice Number</p>
-                <p className='mt-2 text-lg font-semibold'>
-                  {data.result.geminiResponse.invoiceNumber || '—'}
+            {/* DETAILS SECTION */}
+            <div className='space-y-4'>
+              <div className='flex items-center justify-between'>
+                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
+                  Invoice Details
                 </p>
+                {editingSections.details ? (
+                  <Button onClick={() => handleSaveSection('details')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+                    <IconCheck className="w-3.5 h-3.5" />
+                    Save
+                  </Button>
+                ) : (
+                  <Button onClick={() => toggleEdit('details')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+                    <IconPencil className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
-              <div>
-                <p className='text-xs font-medium text-muted-foreground'>Currency</p>
-                <p className='mt-2 text-lg font-semibold'>
-                  {data.result.geminiResponse.currency || '—'}
+
+              <div className='grid grid-cols-2 gap-4'>
+                <div className='space-y-1'>
+                  <p className='text-xs font-medium text-muted-foreground'>Invoice Number</p>
+                  {editingSections.details ? (
+                     <Input value={invoice.invoiceNumber || ''} onChange={(e) => handleChange('invoiceNumber', e.target.value)} className="h-8 text-sm" />
+                  ) : (
+                     <p className='text-sm font-semibold'>{invoice.invoiceNumber || '—'}</p>
+                  )}
+                </div>
+                <div className='space-y-1'>
+                  <p className='text-xs font-medium text-muted-foreground'>Currency</p>
+                  {editingSections.details ? (
+                     <Input value={invoice.currency || ''} onChange={(e) => handleChange('currency', e.target.value)} className="h-8 text-sm" />
+                  ) : (
+                     <p className='text-sm font-semibold'>{invoice.currency || '—'}</p>
+                  )}
+                </div>
+                <div className='space-y-1'>
+                  <p className='text-xs font-medium text-muted-foreground'>Issue Date</p>
+                  {editingSections.details ? (
+                     <Input value={invoice.issueDate || ''} onChange={(e) => handleChange('issueDate', e.target.value)} className="h-8 text-sm" />
+                  ) : (
+                     <p className='text-sm'>{invoice.issueDate || '—'}</p>
+                  )}
+                </div>
+                <div className='space-y-1'>
+                  <p className='text-xs font-medium text-muted-foreground'>Due Date</p>
+                  {editingSections.details ? (
+                     <Input value={invoice.dueDate || ''} onChange={(e) => handleChange('dueDate', e.target.value)} className="h-8 text-sm" />
+                  ) : (
+                     <p className='text-sm'>{invoice.dueDate || '—'}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* VENDOR SECTION */}
+            <div className='border-t pt-4 space-y-4'>
+              <div className='flex items-center justify-between'>
+                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
+                  Vendor
                 </p>
+                {editingSections.vendor ? (
+                  <Button onClick={() => handleSaveSection('vendor')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+                    <IconCheck className="w-3.5 h-3.5" />
+                    Save
+                  </Button>
+                ) : (
+                  <Button onClick={() => toggleEdit('vendor')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+                    <IconPencil className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
-              <div>
-                <p className='text-xs font-medium text-muted-foreground'>Issue Date</p>
-                <p className='mt-2 text-sm'>{data.result.geminiResponse.issueDate || '—'}</p>
+              <div className='space-y-1'>
+                <p className='text-xs font-medium text-muted-foreground'>Name</p>
+                {editingSections.vendor ? (
+                   <Input value={invoice.vendorName || ''} onChange={(e) => handleChange('vendorName', e.target.value)} className="h-8 text-sm" />
+                ) : (
+                   <p className="text-sm font-semibold">{invoice.vendorName || '—'}</p>
+                )}
               </div>
-              <div>
-                <p className='text-xs font-medium text-muted-foreground'>Due Date</p>
-                <p className='mt-2 text-sm'>{data.result.geminiResponse.dueDate || '—'}</p>
+              <div className='space-y-1'>
+                <p className='text-xs font-medium text-muted-foreground'>Address</p>
+                {editingSections.vendor ? (
+                   <Input value={invoice.vendorAddress || ''} onChange={(e) => handleChange('vendorAddress', e.target.value)} className="h-8 text-sm" />
+                ) : (
+                   <p className="text-sm text-muted-foreground">{invoice.vendorAddress || '—'}</p>
+                )}
               </div>
             </div>
 
-            <div className='border-t pt-4'>
-              <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3'>
-                Vendor
-              </p>
-              <p className='font-semibold'>{data.result.geminiResponse.vendorName || '—'}</p>
-              <p className='text-sm text-muted-foreground'>
-                {data.result.geminiResponse.vendorAddress || '—'}
-              </p>
+            {/* CUSTOMER SECTION */}
+            <div className='border-t pt-4 space-y-4'>
+              <div className='flex items-center justify-between'>
+                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
+                  Customer
+                </p>
+                {editingSections.customer ? (
+                  <Button onClick={() => handleSaveSection('customer')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+                    <IconCheck className="w-3.5 h-3.5" />
+                    Save
+                  </Button>
+                ) : (
+                  <Button onClick={() => toggleEdit('customer')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+                    <IconPencil className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+              <div className='space-y-1'>
+                <p className='text-xs font-medium text-muted-foreground'>Name</p>
+                {editingSections.customer ? (
+                   <Input value={invoice.customerName || ''} onChange={(e) => handleChange('customerName', e.target.value)} className="h-8 text-sm" />
+                ) : (
+                   <p className="text-sm font-semibold">{invoice.customerName || '—'}</p>
+                )}
+              </div>
+              <div className='space-y-1'>
+                <p className='text-xs font-medium text-muted-foreground'>Address</p>
+                {editingSections.customer ? (
+                   <Input value={invoice.customerAddress || ''} onChange={(e) => handleChange('customerAddress', e.target.value)} className="h-8 text-sm" />
+                ) : (
+                   <p className="text-sm text-muted-foreground">{invoice.customerAddress || '—'}</p>
+                )}
+              </div>
             </div>
 
-            <div className='border-t pt-4'>
-              <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3'>
-                Customer
-              </p>
-              <p className='font-semibold'>{data.result.geminiResponse.customerName || '—'}</p>
-              <p className='text-sm text-muted-foreground'>
-                {data.result.geminiResponse.customerAddress || '—'}
-              </p>
-            </div>
-
+            {/* SUMMARY SECTION */}
             <div className='border-t pt-4 space-y-3'>
-              <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                Summary
-              </p>
-              <div className='flex justify-between'>
-                <span className='text-muted-foreground'>Subtotal:</span>
-                <span className='font-semibold'>${data.result.geminiResponse.subtotal}</span>
+              <div className='flex items-center justify-between'>
+                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
+                  Summary
+                </p>
+                {editingSections.summary ? (
+                  <Button onClick={() => handleSaveSection('summary')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+                    <IconCheck className="w-3.5 h-3.5" />
+                    Save
+                  </Button>
+                ) : (
+                  <Button onClick={() => toggleEdit('summary')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+                    <IconPencil className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
-              <div className='flex justify-between'>
-                <span className='text-muted-foreground'>Tax:</span>
-                <span className='font-semibold'>${data.result.geminiResponse.taxAmount}</span>
+              <div className='flex items-center justify-between gap-4'>
+                <span className='text-muted-foreground text-sm w-24'>Subtotal ($):</span>
+                {editingSections.summary ? (
+                    <Input type="number" step="0.01" value={invoice.subtotal || 0} onChange={(e) => handleChange('subtotal', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
+                ) : (
+                    <span className='text-sm font-semibold'>${invoice.subtotal}</span>
+                )}
               </div>
-              <div className='flex justify-between border-t pt-3 text-lg font-bold'>
-                <span>Total:</span>
-                <span>${data.result.geminiResponse.totalAmount}</span>
+              <div className='flex items-center justify-between gap-4'>
+                <span className='text-muted-foreground text-sm w-24'>Tax ($):</span>
+                {editingSections.summary ? (
+                    <Input type="number" step="0.01" value={invoice.taxAmount || 0} onChange={(e) => handleChange('taxAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
+                ) : (
+                    <span className='text-sm font-semibold'>${invoice.taxAmount}</span>
+                )}
+              </div>
+              <div className='flex items-center justify-between gap-4 border-t pt-3'>
+                <span className='font-bold w-24'>Total ($):</span>
+                {editingSections.summary ? (
+                    <Input type="number" step="0.01" value={invoice.totalAmount || 0} onChange={(e) => handleChange('totalAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1 font-bold" />
+                ) : (
+                    <span className='font-bold'>${invoice.totalAmount}</span>
+                )}
               </div>
             </div>
 
-            {/* Line Items */}
-            {data.result.geminiResponse.lineItems &&
-              data.result.geminiResponse.lineItems.length > 0 && (
-                <div className='border-t pt-4 space-y-3'>
-                  <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                    Line Items
-                  </p>
-                  <div className='space-y-2'>
-                    {data.result.geminiResponse.lineItems.map((item, itemIdx) => (
-                      <div
-                        key={itemIdx}
-                        className='flex items-center justify-between rounded-lg border p-2 text-sm'
-                      >
-                        <div className='flex-1'>
-                          <p className='font-medium text-xs'>{item.description}</p>
-                          <p className='text-xs text-muted-foreground'>
-                            {item.quantity} x ${item.unitPrice}
-                          </p>
+            {/* LINE ITEMS SECTION */}
+            {invoice.lineItems && invoice.lineItems.length > 0 && (
+                <div className='border-t pt-4 space-y-3 pb-8'>
+                  <div className='flex items-center justify-between'>
+                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
+                      Line Items
+                    </p>
+                    {editingSections.lineItems ? (
+                      <Button onClick={() => handleSaveSection('lineItems')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+                        <IconCheck className="w-3.5 h-3.5" />
+                        Save
+                      </Button>
+                    ) : (
+                      <Button onClick={() => toggleEdit('lineItems')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+                        <IconPencil className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className='space-y-3'>
+                    {invoice.lineItems.map((item, itemIdx) => (
+                      <div key={itemIdx} className='flex flex-col gap-2 rounded-lg border p-3 text-sm'>
+                        <div className='flex items-center justify-between gap-2'>
+                          <span className='text-xs text-muted-foreground w-12'>Desc:</span>
+                          {editingSections.lineItems ? (
+                              <Input value={item.description || ''} onChange={(e) => handleLineItemChange(itemIdx, 'description', e.target.value)} className="h-8 text-xs flex-1" />
+                          ) : (
+                              <span className='text-xs font-medium flex-1'>{item.description}</span>
+                          )}
                         </div>
-                        <p className='font-semibold text-xs'>${item.totalPrice}</p>
+                        <div className='flex items-center justify-between gap-2'>
+                          <span className='text-xs text-muted-foreground w-12'>Qty:</span>
+                          {editingSections.lineItems ? (
+                              <Input type="number" value={item.quantity || 0} onChange={(e) => handleLineItemChange(itemIdx, 'quantity', parseFloat(e.target.value) || 0)} className="h-8 text-xs w-20" />
+                          ) : (
+                              <span className='text-xs w-20'>{item.quantity}</span>
+                          )}
+                          <span className='text-xs text-muted-foreground ml-2 w-12'>Price:</span>
+                          {editingSections.lineItems ? (
+                              <Input type="number" step="0.01" value={item.unitPrice || 0} onChange={(e) => handleLineItemChange(itemIdx, 'unitPrice', parseFloat(e.target.value) || 0)} className="h-8 text-xs w-20" />
+                          ) : (
+                              <span className='text-xs w-20'>${item.unitPrice}</span>
+                          )}
+                        </div>
+                        <div className='flex items-center justify-end gap-2 border-t pt-2 mt-1'>
+                           <span className='text-xs font-semibold'>Total:</span>
+                           {editingSections.lineItems ? (
+                               <Input type="number" step="0.01" value={item.totalPrice || 0} onChange={(e) => handleLineItemChange(itemIdx, 'totalPrice', parseFloat(e.target.value) || 0)} className="h-8 w-24 text-xs font-semibold text-right" />
+                           ) : (
+                               <span className='text-xs font-semibold'>${item.totalPrice}</span>
+                           )}
+                        </div>
                       </div>
                     ))}
                   </div>
