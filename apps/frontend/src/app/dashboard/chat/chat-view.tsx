@@ -1,6 +1,6 @@
 'use client';
 
-import { useChat } from 'ai/react';
+import { useChat } from '@ai-sdk/react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -57,7 +57,7 @@ export function ChatView() {
                       : 'bg-muted text-foreground rounded-tl-sm'
                   }`}
                 >
-                  {m.content.trim() ? m.content : <span className="italic opacity-50">Using internal tools...</span>}
+                  {m.content?.trim() ? m.content : <span className="italic opacity-50">Using internal tools...</span>}
                 </div>
               </div>
             </div>
@@ -77,7 +77,7 @@ export function ChatView() {
         <form 
           onSubmit={(e) => {
              e.preventDefault();
-             if (input.trim()) handleSubmit(e);
+             if (input?.trim()) handleSubmit(e);
           }} 
           className='flex items-center gap-2'
         >
@@ -88,7 +88,7 @@ export function ChatView() {
             className='flex-1'
             disabled={isLoading}
           />
-          <Button type='submit' disabled={isLoading || !input.trim()} size="icon" className="shrink-0">
+          <Button type='submit' disabled={isLoading || !input?.trim()} size="icon" className="shrink-0">
             <IconSend className='w-4 h-4' />
           </Button>
         </form>

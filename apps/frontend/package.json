@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@ai-sdk/groq": "^3.0.35",
+    "@ai-sdk/react": "^3.0.170",
     "@clerk/nextjs": "^6.12.12",
     "@clerk/themes": "^2.2.26",
     "@hookform/resolvers": "^5.2.1",
