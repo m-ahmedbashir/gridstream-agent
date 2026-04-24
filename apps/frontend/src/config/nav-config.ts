@@ -30,7 +30,7 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
-    title: 'AI Copilot',
+    title: 'My Assistant',
     url: '/dashboard/chat',
     icon: 'robot',
     shortcut: ['c', 'c'],

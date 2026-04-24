@@ -95,7 +95,7 @@ export function ChatView() {
             <IconSparkles className='w-5 h-5' />
           </div>
           <div>
-            <h2 className='text-lg font-semibold tracking-tight'>Invoice Assistant</h2>
+            <h2 className='text-lg font-semibold tracking-tight'>My Assistant</h2>
             <p className='text-xs text-muted-foreground'>Powered by secure AI</p>
           </div>
         </div>
@@ -109,9 +109,9 @@ export function ChatView() {
                 <IconRobot className='h-10 w-10 text-primary-foreground' />
               </div>
               <div className='space-y-2'>
-                <h3 className='text-3xl font-bold tracking-tight'>Welcome to your AI Copilot</h3>
+                <h3 className='text-3xl font-bold tracking-tight'>Welcome to My Assistant</h3>
                 <p className='text-muted-foreground max-w-md px-4'>
-                  Ask questions about your invoices. The AI has direct, secure access to your database to help you understand your spending effortlessly.
+                  Get quick help from your assistant anytime.
                 </p>
               </div>
             </div>
@@ -218,7 +218,7 @@ export function ChatView() {
             <Input 
               value={input} 
               onChange={(event) => setInput(event.target.value)} 
-              placeholder='Message your AI Copilot...' 
+              placeholder='Message My Assistant...' 
               className='flex-1 h-14 rounded-full pl-6 pr-14 bg-card border-input focus-visible:ring-1 focus-visible:ring-primary shadow-lg text-[15px]'
               disabled={isLoading}
             />
@@ -233,7 +233,7 @@ export function ChatView() {
             </Button>
           </form>
            <div className='text-center mt-3 text-xs text-muted-foreground'>
-            AI Copilot can make mistakes. Consider verifying important information.
+            My Assistant can make mistakes. Consider verifying important information.
           </div>
         </div>
       </div>
