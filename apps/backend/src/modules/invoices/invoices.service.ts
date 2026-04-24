@@ -51,4 +51,16 @@ export class InvoicesService {
       orderBy: { createdAt: 'desc' }
     });
   }
+
+  async deleteInvoiceById(invoiceId: string) {
+    return this.prisma.invoice.delete({
+      where: { id: invoiceId },
+    });
+  }
+
+  async deleteInvoiceByNumber(invoiceNumber: string) {
+    return this.prisma.invoice.deleteMany({
+      where: { invoiceNumber },
+    });
+  }
 }
