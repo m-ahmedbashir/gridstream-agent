@@ -1,8 +1,8 @@
 import { Injectable, Logger, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { google } from '@ai-sdk/google';
-import { generateObject } from 'ai';
+import { createGroq } from '@ai-sdk/groq';
+import { generateText } from 'ai';
 import { ComplianceService } from '../compliance/compliance.service';
-import { InvoiceSchema, type Invoice } from '@opp/shared';
+import { type Invoice } from '@opp/shared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,11 +15,8 @@ export interface ProcessedFile {
 export interface ExtractionResult {
     /** Original file info (omitted if only text was pasted) */
     file?: ProcessedFile;
-    /** The text that was sent to Gemini (PII already masked) */
     maskedText: string;
-    /** Whether any PII was detected and masked before sending */
     piiDetected: boolean;
-    /** Gemini's structured extraction output, strongly typed to the shared Invoice schema */
     geminiResponse: Invoice;
     /** ISO timestamp of when the extraction completed */
     processedAt: string;
@@ -39,6 +36,7 @@ export interface ExtractionResult {
 @Injectable()
 export class ExtractionService {
     private readonly logger = new Logger(ExtractionService.name);
+    private readonly groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 
     /** Supported MIME types for text extraction */
     private static readonly SUPPORTED_MIME_TYPES = new Set([
@@ -93,15 +91,14 @@ export class ExtractionService {
         const bufferToPass = isImage ? file?.buffer : undefined;
         const mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
-        // Step 3 — Send masked content to Gemini
         let geminiResponse: Invoice;
         try {
-            geminiResponse = await this.callGemini(maskedText, mimeTypeToPass, bufferToPass);
+            geminiResponse = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
         } catch (error) {
-            this.logger.error('Failed to extract data via Gemini API', error);
-            if (error instanceof Error && (error.message.includes('Quota exceeded') || error.message.includes('429'))) {
+            this.logger.error('Failed to extract data via Groq API', error);
+            if (error instanceof Error && error.message.includes('429')) {
                 throw new HttpException(
-                    'Quota Exceeded: The Gemini API free tier limits have been reached. Please try again later or add a billing account.',
+                    'Rate limit exceeded. Please try again in a moment.',
                     HttpStatus.TOO_MANY_REQUESTS
                 );
             }
@@ -149,9 +146,9 @@ export class ExtractionService {
     }
 
     /**
-     * Sends the sanitised text and/or image buffer to Gemini via the Vercel AI SDK.
+     * Sends the sanitised text and/or image buffer to Groq and extracts invoice data.
      */
-    private async callGemini(
+    private async callGroq(
         sanitisedText: string,
         mimeType: string,
         buffer?: Buffer,
@@ -162,7 +159,30 @@ export class ExtractionService {
                 content: [
                     {
                         type: 'text',
-                        text: 'You are an intelligent invoice processing assistant.\n\nExtract the requested invoice attributes from the following document. Note: Any PII in the text has already been redacted and replaced with [REDACTED:<type>] tokens — do NOT attempt to recover them.'
+                        text: `You are an invoice processing assistant. Extract the invoice data from the document and return ONLY a valid JSON object with these fields:
+{
+  "invoiceNumber": "string",
+  "issueDate": "string",
+  "dueDate": "string",
+  "vendorName": "string",
+  "vendorAddress": "string",
+  "customerName": "string",
+  "customerAddress": "string",
+  "lineItems": [
+    {
+      "description": "string",
+      "quantity": "number",
+      "unitPrice": "number",
+      "totalPrice": "number"
+    }
+  ],
+  "subtotal": "number",
+  "taxAmount": "number",
+  "totalAmount": "number",
+  "currency": "string"
+}
+
+Return ONLY the JSON, no other text. If a field is not found, use null.`
                     }
                 ]
             }
@@ -171,7 +191,7 @@ export class ExtractionService {
         if (sanitisedText) {
             messages[0].content.push({
                 type: 'text',
-                text: `\n\nDocument text content:\n---\n${sanitisedText}\n---`
+                text: `\n\nDocument text:\n${sanitisedText}`
             });
         }
 
@@ -183,13 +203,26 @@ export class ExtractionService {
             });
         }
 
-        const { object } = await generateObject({
-            model: google('gemini-2.0-flash-lite'),
-            schema: InvoiceSchema as any,
+        const { text } = await generateText({
+            model: this.groq('meta-llama/llama-4-scout-17b-16e-instruct'),
             messages,
         });
 
-        return object as Invoice;
+        try {
+            // Strip markdown code blocks if present
+            let jsonText = text.trim();
+            if (jsonText.startsWith('```')) {
+                jsonText = jsonText.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '');
+            }
+            const parsed = JSON.parse(jsonText);
+            return parsed as Invoice;
+        } catch (error) {
+            this.logger.error('Failed to parse AI response as JSON:', text);
+            throw new HttpException(
+                'Failed to parse AI response',
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
     }
 
     /** Guard against unsupported MIME types early, before any processing. */

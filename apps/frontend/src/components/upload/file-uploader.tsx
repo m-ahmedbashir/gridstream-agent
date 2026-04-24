@@ -90,6 +90,11 @@ interface UploadedFile {
     errorMessage?: string;
 }
 
+interface ExtractedData {
+    file?: File;
+    result: ExtractionResult;
+}
+
 // ---------------------------------------------------------------------------
 // FileUploaderCard — individual file row
 // ---------------------------------------------------------------------------
@@ -145,6 +150,7 @@ export function FileUploader() {
     const [files, setFiles] = useState<UploadedFile[]>([]);
     const [pastedText, setPastedText] = useState('');
     const [globalState, setGlobalState] = useState<UploadState>('idle');
+    const [extractedData, setExtractedData] = useState<ExtractedData[]>([]);
 
     const handleUploadClick = useCallback(async () => {
         const queue = files.filter((f) => f.state === 'idle' || f.state === 'error');
@@ -153,7 +159,8 @@ export function FileUploader() {
         if (queue.length === 0 && pastedText.trim().length > 0) {
             setGlobalState('uploading');
             try {
-                await uploadInvoice(undefined, pastedText);
+                const result = await uploadInvoice(undefined, pastedText);
+                setExtractedData((prev) => [...prev, { result }]);
                 setGlobalState('success');
             } catch (err) {
                 setGlobalState('error');
@@ -184,7 +191,8 @@ export function FileUploader() {
                 }, 300);
 
                 try {
-                    await uploadInvoice(file, pastedText);
+                    const result = await uploadInvoice(file, pastedText);
+                    setExtractedData((prev) => [...prev, { file, result }]);
                     clearInterval(tickInterval);
                     setFiles((prev) =>
                         prev.map((f) =>
@@ -255,6 +263,7 @@ export function FileUploader() {
         setFiles([]);
         setPastedText('');
         setGlobalState('idle');
+        setExtractedData([]);
     }
 
     const isUploading = globalState === 'uploading';
@@ -418,6 +427,110 @@ export function FileUploader() {
                             Some data failed to process. Check the errors above.
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* Extracted Data Display */}
+            {extractedData.length > 0 && (
+                
+                <div className='mt-6 space-y-4'>
+                    
+                     {/* Left Column: Invoice Image */}
+                                    {data.file && (
+                                        <div className='flex flex-col items-center justify-center bg-muted p-6'>
+                                            <div className='w-full overflow-hidden rounded-lg border'>
+                                                <img
+                                                    src={URL.createObjectURL(data.file)}
+                                                    alt='Uploaded invoice'
+                                                    className='w-full h-auto'
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+
+                    <h3 className='text-lg font-semibold'>Extracted Invoice Data</h3>
+                    {extractedData.map((data, idx) => (
+                        <Card key={idx} className='overflow-hidden'>
+                            <CardContent className='p-0'>
+                                <div className='grid grid-cols-1 md:grid-cols-2 min-h-screen md:min-h-auto'>
+                                   
+                                    {/* Right Column: Extracted Data */}
+                                    <div className='space-y-4 p-6'>
+                                        <div>
+                                            <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>Invoice Details</p>
+                                        </div>
+
+                                        <div className='grid grid-cols-2 gap-4'>
+                                            <div>
+                                                <p className='text-xs font-medium text-muted-foreground'>Invoice Number</p>
+                                                <p className='mt-2 text-lg font-semibold'>{data.result.geminiResponse.invoiceNumber || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className='text-xs font-medium text-muted-foreground'>Currency</p>
+                                                <p className='mt-2 text-lg font-semibold'>{data.result.geminiResponse.currency || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className='text-xs font-medium text-muted-foreground'>Issue Date</p>
+                                                <p className='mt-2 text-sm'>{data.result.geminiResponse.issueDate || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className='text-xs font-medium text-muted-foreground'>Due Date</p>
+                                                <p className='mt-2 text-sm'>{data.result.geminiResponse.dueDate || '—'}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className='border-t pt-4'>
+                                            <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3'>Vendor</p>
+                                            <p className='font-semibold'>{data.result.geminiResponse.vendorName || '—'}</p>
+                                            <p className='text-sm text-muted-foreground'>{data.result.geminiResponse.vendorAddress || '—'}</p>
+                                        </div>
+
+                                        <div className='border-t pt-4'>
+                                            <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3'>Customer</p>
+                                            <p className='font-semibold'>{data.result.geminiResponse.customerName || '—'}</p>
+                                            <p className='text-sm text-muted-foreground'>{data.result.geminiResponse.customerAddress || '—'}</p>
+                                        </div>
+
+                                        <div className='border-t pt-4 space-y-3'>
+                                            <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>Summary</p>
+                                            <div className='flex justify-between'>
+                                                <span className='text-muted-foreground'>Subtotal:</span>
+                                                <span className='font-semibold'>${data.result.geminiResponse.subtotal}</span>
+                                            </div>
+                                            <div className='flex justify-between'>
+                                                <span className='text-muted-foreground'>Tax:</span>
+                                                <span className='font-semibold'>${data.result.geminiResponse.taxAmount}</span>
+                                            </div>
+                                            <div className='flex justify-between border-t pt-3 text-lg font-bold'>
+                                                <span>Total:</span>
+                                                <span>${data.result.geminiResponse.totalAmount}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Line Items - Full Width Below */}
+                                {data.result.geminiResponse.lineItems && data.result.geminiResponse.lineItems.length > 0 && (
+                                    <div className='border-t p-6 space-y-4'>
+                                        <p className='text-sm font-semibold'>Line Items</p>
+                                        <div className='space-y-2'>
+                                            {data.result.geminiResponse.lineItems.map((item, itemIdx) => (
+                                                <div key={itemIdx} className='flex items-center justify-between rounded-lg border p-3'>
+                                                    <div className='flex-1'>
+                                                        <p className='font-medium'>{item.description}</p>
+                                                        <p className='text-xs text-muted-foreground'>
+                                                            {item.quantity} x ${item.unitPrice}
+                                                        </p>
+                                                    </div>
+                                                    <p className='font-semibold'>${item.totalPrice}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    ))}
                 </div>
             )}
         </div>
