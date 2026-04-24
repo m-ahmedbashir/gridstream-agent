@@ -32,21 +32,38 @@ Approved data saved to database
 
 ## What Is Already Built
 
-| Area | Detail | Status |
-|---|---|---|
-| File upload UI | Drag-and-drop, supports images + PDF + text | Done |
-| AI extraction | Groq llama-4-scout-17b (free tier, no card) via Vercel AI SDK | Done |
-| PII masking | Emails, credit cards, IBANs, VAT IDs, phone numbers masked before AI call | Done |
-| Type-safe output | Zod `InvoiceSchema` shared across frontend + backend | Done |
-| HITL dashboard | Split-screen review UI (shadcn/ui) | In progress |
-| Auth | Clerk (keyless dev mode) | Done |
-| Monorepo | pnpm + Turborepo, `apps/frontend` (Next.js), `apps/backend` (NestJS) | Done |
+| Component | Tech | Status |
+|-----------|------|--------|
+| AI extraction | Groq llama-4-scout (free tier) | ✅ Done |
+| File upload UI | Next.js + shadcn/ui | ✅ Done |
+| PII masking | ComplianceService | ✅ Done |
+| Database | Prisma + PostgreSQL (Neon) | ✅ Done |
+| Auth | Clerk | ✅ Done |
+
+## What's Being Built (Portfolio MVP)
+
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| Invoices API | Save extracted data to DB | 🔄 In Progress |
+| Users API | Store user preferences (auto-approve vs manual) | 🔄 In Progress |
+| Settings UI | Let user choose workflow mode | ⏳ Next |
+| Review Form | Edit extracted data before saving | ⏳ Next |
 
 ---
 
 ## GDPR Compliance — Goal & What It Means For This App
 
-This is the **next major milestone**. The app already handles PII, which makes GDPR relevant. Here is what GDPR compliance means in this context and what needs to be built:
+**Note:** For portfolio MVP, GDPR is **out of scope**. The architecture is designed to support it later if needed.
+
+Core principles already implemented:
+- ✅ PII masking before external AI calls
+- ✅ Human-in-the-loop before any data persistence
+- ✅ Database stores only structured data (no raw inputs)
+
+Future additions (not in MVP):
+- Right to erasure endpoint
+- Audit logging
+- Data retention policies
 
 ### What GDPR Requires (Relevant to This App)
 
@@ -61,13 +78,12 @@ This is the **next major milestone**. The app already handles PII, which makes G
 | **Data Breach Notification** | Must be able to detect and report a breach within 72 hours |
 | **Processor Agreement** | Groq, Clerk, Vercel are sub-processors — need DPAs in place |
 
-### What Needs To Be Built
+### What Needs To Be Built (Portfolio MVP Only)
 
-1. **Audit Log** — every extraction event logged: who uploaded, when, PII detected (yes/no), human decision (approved/edited/rejected), timestamp
-2. **Retention Policy** — extracted records flagged with a `expiresAt` date, auto-deleted after N days
-3. **Right to Erasure endpoint** — `DELETE /records/:id` that hard-deletes the record and its audit trail
-4. **Consent Banner / Data Notice** — frontend notice explaining what data is processed and why
-5. **Data Processing Register** — internal doc listing all data flows (upload → AI → DB → human)
+1. **Invoices API** - Single endpoint to save extracted invoices
+2. **Users API** - Two endpoints to get/set extraction mode preference
+3. **Settings UI** - Let user choose: Auto-Approve or Manual-Review
+4. **Review Form** - Editable form to modify extracted data before saving
 
 ---
 
@@ -83,19 +99,18 @@ This is the **next major milestone**. The app already handles PII, which makes G
 
 ---
 
-## Key Decisions Made
+## Portfolio MVP Scope
 
-- **Switched from Google Gemini to Groq** — Groq free tier requires no credit card, Gemini required billing setup. Model: `meta-llama/llama-4-scout-17b-16e-instruct`
-- **PaddleOCR dropped** — Groq's vision model reads images natively, a separate OCR microservice is unnecessary overhead
-- **HITL is non-negotiable** — no data hits the database without a human approving it first (this is also the GDPR "human in the loop" requirement for automated processing)
-- **PII masked before AI** — ComplianceService runs before any external API call, so raw personal data never leaves the system unredacted
+**What we're building:**
+- Clean end-to-end HITL workflow ✅
+- Two workflow modes with user preference ✅
+- Editable form for manual review ✅
+- Database persistence ✅
+- Readable, portfolio-quality code ✅
 
----
-
-## What Is Not Built Yet
-
-- Database (no ORM, no tables yet — extraction results returned to frontend but not persisted)
-- Right to erasure / audit log (GDPR requirement)
-- Confidence scoring (auto-approve high-confidence, flag low-confidence)
-- CRM integrations (Salesforce, HubSpot)
-- Expanded schemas beyond invoices (employee forms, maintenance reports)
+**What we're NOT building (out of scope):**
+- Complex CRUD operations
+- Full GDPR compliance
+- Advanced error handling
+- Production deployment
+- API documentation

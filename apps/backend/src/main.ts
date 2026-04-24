@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { PrismaService } from './common/prisma/prisma.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -7,7 +8,17 @@ async function bootstrap() {
   // 1. Enable CORS so your Next.js Frontend (Port 3000) can talk to this Backend (Port 3001)
   app.enableCors();
 
-  // 2. Use the PORT from cross-env or default to 3001 to avoid conflicts
+  // 2. Test database connection
+  const prisma = app.get(PrismaService);
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('✅ Database connection verified');
+  } catch (error) {
+    console.error('❌ Database connection failed:', error);
+    process.exit(1);
+  }
+
+  // 3. Use the PORT from cross-env or default to 3001 to avoid conflicts
   const port = process.env.PORT || 3001;
 
   await app.listen(port);
