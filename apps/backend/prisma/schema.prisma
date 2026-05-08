@@ -45,3 +45,27 @@ model Invoice {
 
   @@index([userId])
 }
+
+model ExtractionLog {
+  id               String   @id @default(cuid())
+
+  // What came in
+  sourceType       String   // PDF | IMAGE | TEXT | CSV | JSON
+  originalFileName String?
+  fileSizeBytes    Int?
+
+  // What the pipeline measured
+  piiDetected      Boolean  @default(false)
+  processingTimeMs Int
+
+  // Outcome
+  success          Boolean  @default(true)
+  errorMessage     String?
+  invoiceId        String?  // set when the user saves/approves the invoice
+
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sourceType])
+  @@index([success])
+}

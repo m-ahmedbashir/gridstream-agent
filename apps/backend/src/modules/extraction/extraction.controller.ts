@@ -1,6 +1,7 @@
 import {
     Controller,
     Post,
+    Get,
     UploadedFile,
     UseInterceptors,
     Body,
@@ -40,6 +41,11 @@ export class ExtractionController {
      *   3. ExtractionService.processFile() masks PII and calls Gemini.
      *   4. Returns a structured ExtractionResult JSON response.
      */
+    @Get('stats')
+    async getStats() {
+        return this.extractionService.getStats();
+    }
+
     @Post('upload')
     @HttpCode(HttpStatus.OK)
     @UseInterceptors(
