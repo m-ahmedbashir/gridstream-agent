@@ -25,3 +25,18 @@ export const InvoiceSchema = z.object({
 export type Invoice = z.infer<typeof InvoiceSchema>;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
 
+export type InvoiceConfidence = {
+    invoiceNumber: number;
+    issueDate: number;
+    dueDate: number;
+    vendorName: number;
+    vendorAddress: number;
+    customerName: number;
+    customerAddress: number;
+    subtotal: number;
+    taxAmount: number;
+    totalAmount: number;
+    currency: number;
+    lineItems: number;
+};
+

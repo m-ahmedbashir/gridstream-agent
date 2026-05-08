@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { Invoice } from '@opp/shared';
+import { Invoice, InvoiceConfidence } from '@opp/shared';
 
 @Injectable()
 export class InvoicesService {
   constructor(private prisma: PrismaService) {}
 
-  async saveInvoice(invoiceData: Invoice, userId: string, invoiceId?: string) {
+  async saveInvoice(
+    invoiceData: Invoice,
+    userId: string,
+    invoiceId?: string,
+    fieldConfidence?: InvoiceConfidence,
+    avgConfidence?: number,
+  ) {
     const dataPayload = {
         invoiceNumber: invoiceData.invoiceNumber,
         issueDate: invoiceData.issueDate,
@@ -20,6 +26,8 @@ export class InvoicesService {
         totalAmount: invoiceData.totalAmount,
         currency: invoiceData.currency,
         lineItems: invoiceData.lineItems as any,
+        fieldConfidence: fieldConfidence ? (fieldConfidence as any) : undefined,
+        avgConfidence: avgConfidence ?? undefined,
         status: 'APPROVED',
     };
 

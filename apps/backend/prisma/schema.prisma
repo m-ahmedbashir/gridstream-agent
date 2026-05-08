@@ -38,6 +38,10 @@ model Invoice {
   currency         String?
   lineItems        Json?    // Array of line items
 
+  // AI confidence — stored alongside the extracted data
+  fieldConfidence  Json?    // { invoiceNumber: 0.95, vendorName: 0.88, ... }
+  avgConfidence    Float?
+
   // Status
   status           String   @default("APPROVED") // APPROVED | REJECTED | PENDING
   createdAt        DateTime @default(now())
@@ -57,6 +61,9 @@ model ExtractionLog {
   // What the pipeline measured
   piiDetected      Boolean  @default(false)
   processingTimeMs Int
+
+  // AI confidence for this extraction
+  avgConfidence    Float?
 
   // Outcome
   success          Boolean  @default(true)

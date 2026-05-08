@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, Param, Delete } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
-import { Invoice } from '@opp/shared';
+import { Invoice, InvoiceConfidence } from '@opp/shared';
 
 @Controller('invoices')
 export class InvoicesController {
@@ -12,8 +12,20 @@ export class InvoicesController {
   }
 
   @Post('save')
-  async save(@Body() body: { invoiceData: Invoice; userId: string; invoiceId?: string }) {
-    return this.invoicesService.saveInvoice(body.invoiceData, body.userId, body.invoiceId);
+  async save(@Body() body: {
+    invoiceData: Invoice;
+    userId: string;
+    invoiceId?: string;
+    fieldConfidence?: InvoiceConfidence;
+    avgConfidence?: number;
+  }) {
+    return this.invoicesService.saveInvoice(
+      body.invoiceData,
+      body.userId,
+      body.invoiceId,
+      body.fieldConfidence,
+      body.avgConfidence,
+    );
   }
 
   @Delete(':invoiceId')
