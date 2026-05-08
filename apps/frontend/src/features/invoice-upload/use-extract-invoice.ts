@@ -8,6 +8,8 @@ export interface ExtractionResult {
     maskedText: string;
     piiDetected: boolean;
     geminiResponse: Invoice;
+    confidence: import('@opp/shared').InvoiceConfidence;
+    avgConfidence: number;
     processedAt: string;
     processingTimeMs: number;
     sourceType: string;

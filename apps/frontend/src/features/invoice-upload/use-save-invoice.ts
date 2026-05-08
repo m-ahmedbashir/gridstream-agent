@@ -1,11 +1,13 @@
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { Invoice } from '@opp/shared';
+import type { Invoice, InvoiceConfidence } from '@opp/shared';
 
 export type SaveInvoiceVariables = {
     invoiceData: Invoice;
     userId: string;
     invoiceId?: string;
+    fieldConfidence?: InvoiceConfidence;
+    avgConfidence?: number;
 };
 
 async function saveInvoiceRequest(variables: SaveInvoiceVariables) {

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@clerk/nextjs';
 import { useSaveInvoice } from '@/features/invoice-upload/use-save-invoice';
 import { IconDeviceFloppy, IconPencil, IconCheck } from '@tabler/icons-react';
-import type { Invoice } from '@opp/shared';
+import type { Invoice, InvoiceConfidence } from '@opp/shared';
 
 export interface ExtractionResultData {
   file?: File;
@@ -17,8 +17,26 @@ export interface ExtractionResultData {
     maskedText: string;
     piiDetected: boolean;
     geminiResponse: Invoice;
+    confidence?: InvoiceConfidence;
+    avgConfidence?: number;
     processedAt: string;
   };
+}
+
+function ConfidenceBadge({ score }: { score?: number }) {
+  if (score === undefined || score === null) return null;
+  const pct = Math.round(score * 100);
+  const style =
+    pct >= 90
+      ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+      : pct >= 70
+      ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-400'
+      : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400';
+  return (
+    <span className={`ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${style}`}>
+      {pct}%
+    </span>
+  );
 }
 
 export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
@@ -26,6 +44,7 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
   const { mutate: saveInvoice, isPending } = useSaveInvoice();
 
   const initialInvoiceData = data.result.geminiResponse;
+  const confidence = data.result.confidence;
   const [invoice, setInvoice] = useState<Invoice>(initialInvoiceData);
   const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(null);
 
@@ -44,7 +63,13 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
   const handleSave = () => {
     const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
     saveInvoice(
-        { invoiceData: invoice, userId: currentUserId, invoiceId: savedInvoiceId || undefined },
+        {
+            invoiceData: invoice,
+            userId: currentUserId,
+            invoiceId: savedInvoiceId || undefined,
+            fieldConfidence: confidence,
+            avgConfidence: data.result.avgConfidence,
+        },
         {
             onSuccess: (data) => {
                 if (data && data.id) {
@@ -98,7 +123,20 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
             
             {/* GLOBAL ACTIONS */}
             <div className="flex items-center justify-between pb-2 border-b">
-               <h3 className="text-lg font-semibold">Extracted Data</h3>
+               <div className="flex items-center gap-2">
+                 <h3 className="text-lg font-semibold">Extracted Data</h3>
+                 {data.result.avgConfidence !== undefined && (
+                   <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                     data.result.avgConfidence >= 0.9
+                       ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+                       : data.result.avgConfidence >= 0.7
+                       ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-400'
+                       : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400'
+                   }`}>
+                     Avg. confidence {Math.round(data.result.avgConfidence * 100)}%
+                   </span>
+                 )}
+               </div>
                <Button onClick={handleSave} disabled={isPending} className="gap-2 shrink-0">
                  <IconDeviceFloppy className="w-4 h-4" />
                  {isPending ? 'Saving...' : 'Save Invoice'}
@@ -125,7 +163,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
 
               <div className='grid grid-cols-2 gap-4'>
                 <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>Invoice Number</p>
+                  <p className='text-xs font-medium text-muted-foreground'>
+                    Invoice Number<ConfidenceBadge score={confidence?.invoiceNumber} />
+                  </p>
                   {editingSections.details ? (
                      <Input value={invoice.invoiceNumber || ''} onChange={(e) => handleChange('invoiceNumber', e.target.value)} className="h-8 text-sm" />
                   ) : (
@@ -133,7 +173,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                   )}
                 </div>
                 <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>Currency</p>
+                  <p className='text-xs font-medium text-muted-foreground'>
+                    Currency<ConfidenceBadge score={confidence?.currency} />
+                  </p>
                   {editingSections.details ? (
                      <Input value={invoice.currency || ''} onChange={(e) => handleChange('currency', e.target.value)} className="h-8 text-sm" />
                   ) : (
@@ -141,7 +183,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                   )}
                 </div>
                 <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>Issue Date</p>
+                  <p className='text-xs font-medium text-muted-foreground'>
+                    Issue Date<ConfidenceBadge score={confidence?.issueDate} />
+                  </p>
                   {editingSections.details ? (
                      <Input value={invoice.issueDate || ''} onChange={(e) => handleChange('issueDate', e.target.value)} className="h-8 text-sm" />
                   ) : (
@@ -149,7 +193,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                   )}
                 </div>
                 <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>Due Date</p>
+                  <p className='text-xs font-medium text-muted-foreground'>
+                    Due Date<ConfidenceBadge score={confidence?.dueDate} />
+                  </p>
                   {editingSections.details ? (
                      <Input value={invoice.dueDate || ''} onChange={(e) => handleChange('dueDate', e.target.value)} className="h-8 text-sm" />
                   ) : (
@@ -177,7 +223,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>Name</p>
+                <p className='text-xs font-medium text-muted-foreground'>
+                  Name<ConfidenceBadge score={confidence?.vendorName} />
+                </p>
                 {editingSections.vendor ? (
                    <Input value={invoice.vendorName || ''} onChange={(e) => handleChange('vendorName', e.target.value)} className="h-8 text-sm" />
                 ) : (
@@ -185,7 +233,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>Address</p>
+                <p className='text-xs font-medium text-muted-foreground'>
+                  Address<ConfidenceBadge score={confidence?.vendorAddress} />
+                </p>
                 {editingSections.vendor ? (
                    <Input value={invoice.vendorAddress || ''} onChange={(e) => handleChange('vendorAddress', e.target.value)} className="h-8 text-sm" />
                 ) : (
@@ -212,7 +262,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>Name</p>
+                <p className='text-xs font-medium text-muted-foreground'>
+                  Name<ConfidenceBadge score={confidence?.customerName} />
+                </p>
                 {editingSections.customer ? (
                    <Input value={invoice.customerName || ''} onChange={(e) => handleChange('customerName', e.target.value)} className="h-8 text-sm" />
                 ) : (
@@ -220,7 +272,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>Address</p>
+                <p className='text-xs font-medium text-muted-foreground'>
+                  Address<ConfidenceBadge score={confidence?.customerAddress} />
+                </p>
                 {editingSections.customer ? (
                    <Input value={invoice.customerAddress || ''} onChange={(e) => handleChange('customerAddress', e.target.value)} className="h-8 text-sm" />
                 ) : (
@@ -247,7 +301,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='flex items-center justify-between gap-4'>
-                <span className='text-muted-foreground text-sm w-24'>Subtotal ($):</span>
+                <span className='text-muted-foreground text-sm w-28 flex items-center'>
+                  Subtotal ($):<ConfidenceBadge score={confidence?.subtotal} />
+                </span>
                 {editingSections.summary ? (
                     <Input type="number" step="0.01" value={invoice.subtotal || 0} onChange={(e) => handleChange('subtotal', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
                 ) : (
@@ -255,7 +311,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='flex items-center justify-between gap-4'>
-                <span className='text-muted-foreground text-sm w-24'>Tax ($):</span>
+                <span className='text-muted-foreground text-sm w-28 flex items-center'>
+                  Tax ($):<ConfidenceBadge score={confidence?.taxAmount} />
+                </span>
                 {editingSections.summary ? (
                     <Input type="number" step="0.01" value={invoice.taxAmount || 0} onChange={(e) => handleChange('taxAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
                 ) : (
@@ -263,7 +321,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                 )}
               </div>
               <div className='flex items-center justify-between gap-4 border-t pt-3'>
-                <span className='font-bold w-24'>Total ($):</span>
+                <span className='font-bold w-28 flex items-center'>
+                  Total ($):<ConfidenceBadge score={confidence?.totalAmount} />
+                </span>
                 {editingSections.summary ? (
                     <Input type="number" step="0.01" value={invoice.totalAmount || 0} onChange={(e) => handleChange('totalAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1 font-bold" />
                 ) : (
@@ -276,8 +336,8 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
             {invoice.lineItems && invoice.lineItems.length > 0 && (
                 <div className='border-t pt-4 space-y-3 pb-8'>
                   <div className='flex items-center justify-between'>
-                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                      Line Items
+                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center'>
+                      Line Items<ConfidenceBadge score={confidence?.lineItems} />
                     </p>
                     {editingSections.lineItems ? (
                       <Button onClick={() => handleSaveSection('lineItems')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">

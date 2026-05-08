@@ -3,7 +3,7 @@ import { createGroq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { type Invoice } from '@opp/shared';
+import { type Invoice, type InvoiceConfidence } from '@opp/shared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,8 @@ export interface ExtractionResult {
     maskedText: string;
     piiDetected: boolean;
     geminiResponse: Invoice;
+    confidence: InvoiceConfidence;
+    avgConfidence: number;
     processedAt: string;
     processingTimeMs: number;
     sourceType: string;
@@ -111,8 +113,11 @@ export class ExtractionService {
         const mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
         let geminiResponse: Invoice;
+        let confidence: InvoiceConfidence;
         try {
-            geminiResponse = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
+            const groqResult = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
+            geminiResponse = groqResult.invoice;
+            confidence = groqResult.confidence;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -137,6 +142,10 @@ export class ExtractionService {
         }
 
         const processingTimeMs = Date.now() - startTime;
+        const confidenceValues = Object.values(confidence).filter((v) => typeof v === 'number') as number[];
+        const avgConfidence = confidenceValues.length
+            ? Math.round((confidenceValues.reduce((a, b) => a + b, 0) / confidenceValues.length) * 100) / 100
+            : 0;
 
         const log = await this.prisma.extractionLog.create({
             data: {
@@ -145,6 +154,7 @@ export class ExtractionService {
                 fileSizeBytes: file?.size ?? null,
                 piiDetected,
                 processingTimeMs,
+                avgConfidence,
                 success: true,
             },
         });
@@ -160,6 +170,8 @@ export class ExtractionService {
             maskedText,
             piiDetected,
             geminiResponse,
+            confidence,
+            avgConfidence,
             processedAt: new Date().toISOString(),
             processingTimeMs,
             sourceType,
@@ -190,43 +202,61 @@ export class ExtractionService {
     }
 
     /**
-     * Sends the sanitised text and/or image buffer to Groq and extracts invoice data.
+     * Sends the sanitised text and/or image buffer to Groq and extracts invoice data
+     * alongside a per-field confidence score (0–1).
      */
     private async callGroq(
         sanitisedText: string,
         mimeType: string,
         buffer?: Buffer,
-    ): Promise<Invoice> {
+    ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence }> {
         const messages: any[] = [
             {
                 role: 'user',
                 content: [
                     {
                         type: 'text',
-                        text: `You are an invoice processing assistant. Extract the invoice data from the document and return ONLY a valid JSON object with these fields:
+                        text: `You are an invoice processing assistant. Extract the invoice data from the document.
+
+Return ONLY a valid JSON object with exactly this structure — no other text:
 {
-  "invoiceNumber": "string",
-  "issueDate": "string",
-  "dueDate": "string",
-  "vendorName": "string",
-  "vendorAddress": "string",
-  "customerName": "string",
-  "customerAddress": "string",
-  "lineItems": [
-    {
-      "description": "string",
-      "quantity": "number",
-      "unitPrice": "number",
-      "totalPrice": "number"
-    }
-  ],
-  "subtotal": "number",
-  "taxAmount": "number",
-  "totalAmount": "number",
-  "currency": "string"
+  "invoice": {
+    "invoiceNumber": "string or null",
+    "issueDate": "string or null",
+    "dueDate": "string or null",
+    "vendorName": "string or null",
+    "vendorAddress": "string or null",
+    "customerName": "string or null",
+    "customerAddress": "string or null",
+    "lineItems": [{ "description": "string", "quantity": number, "unitPrice": number, "totalPrice": number }],
+    "subtotal": number or null,
+    "taxAmount": number or null,
+    "totalAmount": number or null,
+    "currency": "string or null"
+  },
+  "confidence": {
+    "invoiceNumber": 0.0,
+    "issueDate": 0.0,
+    "dueDate": 0.0,
+    "vendorName": 0.0,
+    "vendorAddress": 0.0,
+    "customerName": 0.0,
+    "customerAddress": 0.0,
+    "subtotal": 0.0,
+    "taxAmount": 0.0,
+    "totalAmount": 0.0,
+    "currency": 0.0,
+    "lineItems": 0.0
+  }
 }
 
-Return ONLY the JSON, no other text. If a field is not found, use null.`
+Confidence rules:
+- Use a float between 0.0 and 1.0 for each field.
+- 0.95–1.0 = clearly visible and unambiguous in the document.
+- 0.75–0.94 = found but required inference or partial reading.
+- 0.50–0.74 = uncertain, guessed from context.
+- 0.0–0.49 = not found or highly uncertain.
+- If a field value is null, its confidence must be 0.0.`
                     }
                 ]
             }
@@ -253,19 +283,18 @@ Return ONLY the JSON, no other text. If a field is not found, use null.`
         });
 
         try {
-            // Strip markdown code blocks if present
             let jsonText = text.trim();
             if (jsonText.startsWith('```')) {
                 jsonText = jsonText.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '');
             }
             const parsed = JSON.parse(jsonText);
-            return parsed as Invoice;
+            return {
+                invoice: parsed.invoice as Invoice,
+                confidence: parsed.confidence as InvoiceConfidence,
+            };
         } catch (error) {
             this.logger.error('Failed to parse AI response as JSON:', text);
-            throw new HttpException(
-                'Failed to parse AI response',
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throw new HttpException('Failed to parse AI response', HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
