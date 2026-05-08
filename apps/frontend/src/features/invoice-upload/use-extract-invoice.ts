@@ -9,6 +9,9 @@ export interface ExtractionResult {
     piiDetected: boolean;
     geminiResponse: Invoice;
     processedAt: string;
+    processingTimeMs: number;
+    sourceType: string;
+    logId: string;
 }
 
 export type ExtractInvoiceVariables = {

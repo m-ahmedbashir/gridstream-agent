@@ -2,6 +2,7 @@ import { Injectable, Logger, UnsupportedMediaTypeException, HttpException, HttpS
 import { createGroq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
 import { ComplianceService } from '../compliance/compliance.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
 import { type Invoice } from '@opp/shared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -18,8 +19,10 @@ export interface ExtractionResult {
     maskedText: string;
     piiDetected: boolean;
     geminiResponse: Invoice;
-    /** ISO timestamp of when the extraction completed */
     processedAt: string;
+    processingTimeMs: number;
+    sourceType: string;
+    logId: string;
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -38,6 +41,13 @@ export class ExtractionService {
     private readonly logger = new Logger(ExtractionService.name);
     private readonly groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 
+    private static readonly MIME_TO_SOURCE: Record<string, string> = {
+        'text/plain': 'TEXT',
+        'text/csv': 'CSV',
+        'application/json': 'JSON',
+        'application/pdf': 'PDF',
+    };
+
     /** Supported MIME types for text extraction */
     private static readonly SUPPORTED_MIME_TYPES = new Set([
         'text/plain',
@@ -49,7 +59,10 @@ export class ExtractionService {
         'image/webp',
     ]);
 
-    constructor(private readonly complianceService: ComplianceService) { }
+    constructor(
+        private readonly complianceService: ComplianceService,
+        private readonly prisma: PrismaService,
+    ) { }
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -63,6 +76,8 @@ export class ExtractionService {
         file?: Express.Multer.File,
         textPayload?: string,
     ): Promise<ExtractionResult> {
+        const startTime = Date.now();
+
         this.logger.log(
             `Processing submission: file=${file?.originalname ?? 'none'}, text=${textPayload ? 'provided' : 'none'}`
         );
@@ -74,6 +89,10 @@ export class ExtractionService {
         if (file) {
             this.validateMimeType(file.mimetype);
         }
+
+        const sourceType = file
+            ? (file.mimetype.startsWith('image/') ? 'IMAGE' : (ExtractionService.MIME_TO_SOURCE[file.mimetype] ?? 'UNKNOWN'))
+            : 'TEXT';
 
         // Step 1 — Extract raw text from the file buffer, append pasted text
         const extractedFileText = file ? this.extractText(file) : '';
@@ -95,18 +114,40 @@ export class ExtractionService {
         try {
             geminiResponse = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
         } catch (error) {
+            const processingTimeMs = Date.now() - startTime;
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+            await this.prisma.extractionLog.create({
+                data: {
+                    sourceType,
+                    originalFileName: file?.originalname ?? null,
+                    fileSizeBytes: file?.size ?? null,
+                    piiDetected,
+                    processingTimeMs,
+                    success: false,
+                    errorMessage,
+                },
+            });
+
             this.logger.error('Failed to extract data via Groq API', error);
             if (error instanceof Error && error.message.includes('429')) {
-                throw new HttpException(
-                    'Rate limit exceeded. Please try again in a moment.',
-                    HttpStatus.TOO_MANY_REQUESTS
-                );
+                throw new HttpException('Rate limit exceeded. Please try again in a moment.', HttpStatus.TOO_MANY_REQUESTS);
             }
-            throw new HttpException(
-                'Failed to process file through AI extraction engine.',
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throw new HttpException('Failed to process file through AI extraction engine.', HttpStatus.INTERNAL_SERVER_ERROR);
         }
+
+        const processingTimeMs = Date.now() - startTime;
+
+        const log = await this.prisma.extractionLog.create({
+            data: {
+                sourceType,
+                originalFileName: file?.originalname ?? null,
+                fileSizeBytes: file?.size ?? null,
+                piiDetected,
+                processingTimeMs,
+                success: true,
+            },
+        });
 
         const result: ExtractionResult = {
             ...(file && {
@@ -120,9 +161,12 @@ export class ExtractionService {
             piiDetected,
             geminiResponse,
             processedAt: new Date().toISOString(),
+            processingTimeMs,
+            sourceType,
+            logId: log.id,
         };
 
-        this.logger.log(`Extraction complete.`);
+        this.logger.log(`Extraction complete in ${processingTimeMs}ms.`);
         return result;
     }
 
@@ -223,6 +267,54 @@ Return ONLY the JSON, no other text. If a field is not found, use null.`
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    async getStats() {
+        const [total, successCount, piiCount, bySourceType, avgTime, recent] = await Promise.all([
+            this.prisma.extractionLog.count(),
+            this.prisma.extractionLog.count({ where: { success: true } }),
+            this.prisma.extractionLog.count({ where: { piiDetected: true } }),
+            this.prisma.extractionLog.groupBy({
+                by: ['sourceType'],
+                _count: { id: true },
+                _avg: { processingTimeMs: true },
+            }),
+            this.prisma.extractionLog.aggregate({
+                _avg: { processingTimeMs: true },
+                where: { success: true },
+            }),
+            this.prisma.extractionLog.findMany({
+                orderBy: { createdAt: 'desc' },
+                take: 10,
+                select: {
+                    id: true,
+                    sourceType: true,
+                    originalFileName: true,
+                    fileSizeBytes: true,
+                    piiDetected: true,
+                    processingTimeMs: true,
+                    success: true,
+                    errorMessage: true,
+                    createdAt: true,
+                },
+            }),
+        ]);
+
+        return {
+            total,
+            successCount,
+            failureCount: total - successCount,
+            successRate: total > 0 ? Math.round((successCount / total) * 100) : 0,
+            piiDetectedCount: piiCount,
+            piiDetectionRate: total > 0 ? Math.round((piiCount / total) * 100) : 0,
+            avgProcessingTimeMs: Math.round(avgTime._avg.processingTimeMs ?? 0),
+            bySourceType: bySourceType.map((row) => ({
+                sourceType: row.sourceType,
+                count: row._count.id,
+                avgProcessingTimeMs: Math.round(row._avg.processingTimeMs ?? 0),
+            })),
+            recentExtractions: recent,
+        };
     }
 
     /** Guard against unsupported MIME types early, before any processing. */
