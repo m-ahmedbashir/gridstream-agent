@@ -23,7 +23,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.96",
     "@ai-sdk/groq": "^3.0.35",
+    "@ai-sdk/openai": "^3.0.84",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",

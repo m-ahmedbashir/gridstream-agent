@@ -42,8 +42,18 @@ jest.mock('ai', () => ({
     }),
 }));
 
+// Each provider mock returns a distinguishable string so tests can assert on
+// exactly which model the registry resolved to, without needing a real SDK.
 jest.mock('@ai-sdk/groq', () => ({
-    createGroq: jest.fn().mockReturnValue(jest.fn().mockReturnValue('mock-model')),
+    createGroq: jest.fn().mockReturnValue(jest.fn((modelId: string) => `groq-model:${modelId}`)),
+}));
+
+jest.mock('@ai-sdk/openai', () => ({
+    createOpenAI: jest.fn().mockReturnValue(jest.fn((modelId: string) => `openai-model:${modelId}`)),
+}));
+
+jest.mock('@ai-sdk/anthropic', () => ({
+    createAnthropic: jest.fn().mockReturnValue(jest.fn((modelId: string) => `anthropic-model:${modelId}`)),
 }));
 
 // pdf-parse is exercised directly by its own describe block below with its
@@ -301,6 +311,96 @@ describe('ExtractionService', () => {
             const file = makeFile('Total: 500 USD', 'text/plain');
             const result = await service.processFile(file);
             expect(result.imagePiiDetected).toBe(false);
+        });
+    });
+
+    describe('processFile() — model registry', () => {
+        it('resolves the default model (groq:llama-4-scout) when no modelKey is configured', async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+            await service.processFile(file);
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('groq-model:meta-llama/llama-4-scout-17b-16e-instruct');
+        });
+
+        it('resolves a different registry entry when the service is configured with a different modelKey', async () => {
+            const textOnlyService = new ExtractionService(complianceService, prisma, 'groq:llama-3.3-70b');
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await textOnlyService.processFile(file);
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('groq-model:llama-3.3-70b-versatile');
+        });
+
+        it('resolves an OpenAI model through the same registry, provider-agnostically', async () => {
+            const openAiService = new ExtractionService(complianceService, prisma, 'openai:gpt-4o');
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await openAiService.processFile(file);
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('openai-model:gpt-4o');
+        });
+
+        it('rejects an image request outright when the configured model does not support vision', async () => {
+            const textOnlyService = new ExtractionService(complianceService, prisma, 'groq:llama-3.3-70b');
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+
+            await expect(textOnlyService.processFile(file)).rejects.toThrow(
+                "doesn't support image input",
+            );
+            expect(generateText).not.toHaveBeenCalled();
+        });
+
+        it('still allows a text-only model to process a request with no image', async () => {
+            const textOnlyService = new ExtractionService(complianceService, prisma, 'groq:llama-3.3-70b');
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await expect(textOnlyService.processFile(file)).resolves.toBeDefined();
+            expect(generateText).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('getModels()', () => {
+        it('returns the registry as a flat list the frontend can render directly', () => {
+            const models = service.getModels();
+            expect(models).toContainEqual(
+                expect.objectContaining({ key: 'groq:llama-4-scout', supportsVision: true }),
+            );
+            expect(models).toContainEqual(
+                expect.objectContaining({ key: 'groq:llama-3.3-70b', supportsVision: false }),
+            );
+        });
+    });
+
+    describe('processFile() — per-request modelKey override (Phase 2)', () => {
+        it('uses the per-request modelKey instead of the instance default when one is provided', async () => {
+            // service defaults to groq:llama-4-scout (no constructor override)
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await service.processFile(file, undefined, 'openai:gpt-4o');
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('openai-model:gpt-4o');
+        });
+
+        it('falls back to the instance default when the requested modelKey is not a recognised registry key', async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await service.processFile(file, undefined, 'not-a-real-model');
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('groq-model:meta-llama/llama-4-scout-17b-16e-instruct');
+        });
+
+        it('still applies the vision-capability guard to a per-request override, not just the instance default', async () => {
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+
+            await expect(
+                service.processFile(file, undefined, 'groq:llama-3.3-70b'),
+            ).rejects.toThrow("doesn't support image input");
+            expect(generateText).not.toHaveBeenCalled();
         });
     });
 });

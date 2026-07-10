@@ -4,34 +4,55 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSettings, type ExtractionMode } from '../hooks/useSettings';
+import { useModelOptions } from '../hooks/useModelOptions';
+
+const PROVIDER_LABELS: Record<string, string> = {
+  groq: 'Groq',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+};
 
 /**
  * Settings Form Component
- * Allows users to choose between Auto-Approve and Manual-Review extraction modes
+ * Lets a user choose their extraction mode (Auto-Approve / Manual Review)
+ * and which AI model extraction requests are sent to.
  */
 export function SettingsForm() {
   const { settings, loading, error, updateSettings } = useSettings();
+  const { models, loading: modelsLoading } = useModelOptions();
   const [selectedMode, setSelectedMode] = useState<ExtractionMode>('MANUAL_REVIEW');
+  const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (settings?.extractionMode) {
       setSelectedMode(settings.extractionMode);
     }
+    if (settings?.modelKey) {
+      setSelectedModelKey(settings.modelKey);
+    }
   }, [settings]);
+
+  const hasUnsavedChanges =
+    !!settings &&
+    (selectedMode !== settings.extractionMode || selectedModelKey !== settings.modelKey);
 
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      const success = await updateSettings(selectedMode);
+      const success = await updateSettings({
+        extractionMode: selectedMode,
+        modelKey: selectedModelKey,
+      });
       if (success) {
-        toast.success(`Extraction mode updated to ${selectedMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'}`);
+        toast.success('Settings updated');
       } else {
-        toast.error('Failed to update extraction mode');
+        toast.error('Failed to update settings');
       }
     } finally {
       setIsSaving(false);
@@ -85,6 +106,32 @@ export function SettingsForm() {
           </div>
         </RadioGroup>
 
+        <div className='border-t pt-6 space-y-2'>
+          <Label htmlFor='model-picker' className='text-base font-semibold'>
+            AI Model
+          </Label>
+          <p className='text-sm text-muted-foreground'>
+            Which model reads your invoices. Models without vision support can't process images or scanned PDFs.
+          </p>
+          <Select
+            value={selectedModelKey}
+            onValueChange={setSelectedModelKey}
+            disabled={modelsLoading || models.length === 0}
+          >
+            <SelectTrigger id='model-picker' className='w-full sm:w-[320px]'>
+              <SelectValue placeholder={modelsLoading ? 'Loading models...' : 'Select a model...'} />
+            </SelectTrigger>
+            <SelectContent>
+              {models.map((model) => (
+                <SelectItem key={model.key} value={model.key}>
+                  {PROVIDER_LABELS[model.provider] ?? model.provider} — {model.modelId}
+                  {!model.supportsVision && ' (text only)'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {error && (
           <div className='rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive'>
             {error}
@@ -92,10 +139,7 @@ export function SettingsForm() {
         )}
 
         <div className='flex justify-end gap-2 pt-4'>
-          <Button
-            onClick={handleSave}
-            disabled={isSaving || !settings || selectedMode === settings.extractionMode}
-          >
+          <Button onClick={handleSave} disabled={isSaving || !settings || !hasUnsavedChanges}>
             {isSaving ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -107,9 +151,9 @@ export function SettingsForm() {
           </Button>
         </div>
 
-        {settings && selectedMode === settings.extractionMode && (
+        {settings && !hasUnsavedChanges && (
           <p className='text-xs text-muted-foreground text-center'>
-            Current mode: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'}
+            Current: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · {settings.modelKey}
           </p>
         )}
       </CardContent>
