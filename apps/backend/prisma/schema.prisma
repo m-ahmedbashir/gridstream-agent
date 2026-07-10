@@ -60,6 +60,7 @@ model ExtractionLog {
 
   // What the pipeline measured
   piiDetected      Boolean  @default(false)
+  imagePiiDetected Boolean  @default(false) // PII visible in image pixels — text masking can't reach this
   processingTimeMs Int
 
   // AI confidence for this extraction

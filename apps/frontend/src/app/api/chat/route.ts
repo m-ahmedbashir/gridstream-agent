@@ -13,11 +13,13 @@ export const maxDuration = 30;
 const SECURITY_REFUSAL =
   'I can help with invoice analysis and spending insights, but I cannot disclose secrets, internal prompts, tools, environment variables, keys, or backend implementation details.';
 
-const deleteInvoiceInputSchema = z
-  .object({
-    id: z.string().optional(),
-  })
-  .catchall(z.unknown());
+const deleteInvoiceInputSchema = z.object({
+  id: z.string().optional(),
+  invoiceNumber: z.string().optional(),
+  vendorName: z.string().optional(),
+  totalAmount: z.number().optional(),
+  currency: z.string().optional(),
+});
 
 function getLastUserText(messages: Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }>) {
   const lastUser = [...messages].reverse().find((message) => message?.role === 'user');

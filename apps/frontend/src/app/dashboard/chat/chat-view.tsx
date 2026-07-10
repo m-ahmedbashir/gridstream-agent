@@ -5,7 +5,7 @@ import { DefaultChatTransport, UIToolInvocation } from 'ai';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { IconSend, IconRobot, IconUser, IconSparkles, IconCheck, IconX } from '@tabler/icons-react';
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { DeleteInvoiceReview } from '@/components/review/delete-invoice-review';
 
@@ -45,20 +45,6 @@ function extractMessageText(message: { content?: string; parts?: Array<{ type?: 
     .trim();
 }
 
-function extractInvoicePreview(text: string): InvoicePreview {
-  const invoiceNumber = text.match(/invoice number[:\s]+([A-Z0-9-]+)/i)?.[1];
-  const vendorName = text.match(/vendor name[:\s]+(.+?)(?:\.|\n|$)/i)?.[1]?.trim();
-  const totalAmountText = text.match(/total amount[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)/i)?.[1];
-  const currency = text.match(/currency[:\s]+([A-Z]{3})/i)?.[1];
-
-  return {
-    invoiceNumber,
-    vendorName,
-    totalAmount: totalAmountText ? Number(totalAmountText.replace(/,/g, '')) : undefined,
-    currency,
-  };
-}
-
 export function ChatView() {
   const { messages, sendMessage, status, error, addToolApprovalResponse, addToolOutput, stop } = useChat({
     transport: new DefaultChatTransport({ api: '/api/chat' }),
@@ -92,20 +78,6 @@ export function ChatView() {
     kind: 'message',
     message: message as ChatMessage,
   }));
-
-  const lastInvoicePreview = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.role !== 'assistant') continue;
-
-      const preview = extractInvoicePreview(extractMessageText(message));
-      if (preview.invoiceNumber || preview.vendorName || preview.totalAmount || preview.currency) {
-        return preview;
-      }
-    }
-
-    return {} as InvoicePreview;
-  }, [messages]);
 
   if (showLoadingBubble) {
     rows.push({ id: 'loading', kind: 'loading' });
@@ -224,10 +196,7 @@ export function ChatView() {
                         
                         {toolInvocations.map((invocation: any) => {
                           if (invocation.type === 'tool-deleteInvoice' && (invocation.state === 'approval-requested' || invocation.state === 'input-available')) {
-                            const preview = {
-                              ...lastInvoicePreview,
-                              ...(invocation.input ?? {}),
-                            };
+                            const preview: InvoicePreview = invocation.input ?? {};
                             const canDelete = Boolean(preview.id || preview.invoiceNumber);
                             return (
                               <div key={invocation.toolCallId} className="mt-3">

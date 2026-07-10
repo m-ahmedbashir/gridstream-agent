@@ -19,34 +19,21 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 
 ### 🟢 Current Features
 
-- **Multimodal extraction, including scanned PDFs.** Text, CSV, JSON, PDF, and images (PNG/JPEG/WebP) are all accepted. Images go straight to Groq's vision-capable model with no local OCR step. PDFs try a text-layer extraction first (`pdf-parse`); if a PDF has no real text — a scanned/image-only document — its first page is rendered to a PNG server-side (`pdf-parse`'s bundled `@napi-rs/canvas` rasterizer) and routed through the same vision path as a direct image upload, instead of failing.
-- **PII masking before anything leaves the server.** An ordered regex pipeline (IBAN → card → email → VAT → phone) strips sensitive tokens out of any text content *before* it's sent to the model. Order is deliberate: looser patterns run last so they can't partially consume a more specific match.
+- **Multimodal extraction, including multi-page scanned PDFs.** Text, CSV, JSON, PDF, and images (PNG/JPEG/WebP) are all accepted. Images go straight to Groq's vision-capable model with no local OCR step. PDFs try a text-layer extraction first (`pdf-parse`); if a PDF has no real text — a scanned/image-only document — up to its first 5 pages are rendered to PNGs server-side (`pdf-parse`'s bundled `@napi-rs/canvas` rasterizer) and sent as separate image blocks through the same vision path as a direct image upload, instead of failing or only seeing page 1.
+- **PII masking before anything leaves the server, with a flag for what it can't reach.** An ordered regex pipeline (IBAN → card → email → VAT → phone) strips sensitive tokens out of any text content *before* it's sent to the model. Text masking can't redact pixels, so for images and rasterized PDF pages the extraction prompt separately asks the model to report whether it can see raw PII (email/phone/IBAN/card) printed anywhere in the frame; if so, `imagePiiDetected` is set, logged, and surfaced as a review warning in the UI — the model's claim is only trusted when an image was actually sent, never taken at face value otherwise.
 - **Confidence as six fixed anchors, not a fabricated float.** The extraction prompt forces exactly `1.0 / 0.8 / 0.6 / 0.4 / 0.2 / 0.0`, each with a written rubric, so a score means the same thing every time — and the UI's badge colour thresholds map onto those same six values with no room for mismatch.
-- **Two independent HITL mechanisms:**
+- **Three independent HITL mechanisms:**
   - A per-user `extractionMode` setting (`MANUAL_REVIEW` / `AUTO_APPROVE`, defaulting to the safe option) gates whether extracted invoices need a review click before saving.
-  - The chat assistant's `deleteInvoice` tool sits in an `approval-requested` state until a human clicks Approve — the destructive action cannot execute otherwise, and success/failure is wired back into the tool's state either way, not left hanging.
+  - The chat assistant's `deleteInvoice` tool sits in an `approval-requested` state until a human clicks Approve — the destructive action cannot execute otherwise, and success/failure is wired back into the tool's state either way, not left hanging. Its Zod schema fully declares `invoiceNumber`/`vendorName`/`totalAmount`/`currency`/`id` as typed fields, so the frontend reads the confirmation card straight from the tool's structured input — no scraping the assistant's prose to backfill missing fields.
+  - The `imagePiiDetected` review warning above.
 - **One Zod schema, shared everywhere.** `InvoiceSchema` lives once in `packages/shared`, uses `.strict()` so hallucinated extra fields are rejected, and both apps import the same `z.infer`'d type — a schema change is a compile error in both apps at once.
 - **Defense-in-depth uploads.** Files are buffered in memory only (never written to disk), and MIME type/size are validated independently at three layers (Multer, the NestJS pipe, and an in-service allowlist) before any processing starts.
-- **Real observability.** Every extraction attempt — success *and* failure — writes an `ExtractionLog` row. The `/extraction/stats` endpoint runs five Prisma aggregate queries concurrently via `Promise.all` and reports success rate, PII-detection rate, and average latency by source type.
+- **Real observability.** Every extraction attempt — success *and* failure — writes an `ExtractionLog` row. The `/extraction/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, text-PII rate, image-PII rate, and average latency by source type.
 - **A virtualized, stream-aware chat UI.** The message list renders through `react-virtuoso` instead of one DOM node per message, and autoscroll behaviour adapts to state (`'auto'` while streaming, `'smooth'` on submit, off once the user has scrolled up to read history).
-- **23 passing unit tests** across the extraction and compliance services, including dedicated coverage for the PDF-with-text-layer, PDF-with-no-text-layer (rasterization fallback), PDF-where-rasterization-also-fails, and PDF-plus-pasted-text cases.
+- **27 passing unit tests** across the extraction and compliance services, including multi-page rasterization, rasterization-failure, and image-PII-flag coverage.
 
-### 🟠 Known Limitations
-
-Documented here deliberately rather than discovered later — this list is a snapshot from an active codebase, not a finished product:
-
-- **PII masking doesn't cover image content.** The regex pipeline only runs on text. A printed IBAN or email visible in a scanned invoice photo — or a rasterized PDF page — is sent to Groq unmasked, because pixels can't be regex-matched. Masking currently only protects text that's typed, pasted, or pulled from a PDF's text layer.
-- **The chat's invoice-preview card partly regex-scrapes the assistant's free-text reply** rather than reading fully structured tool output — a pragmatic shortcut that's fragile if the model rephrases itself.
-- **The PDF rasterization fallback only renders page 1.** A multi-page scanned PDF where the invoice data spans page 2+ won't be seen by the model.
-
-*(Previously listed here and since fixed: PDFs silently sending no content to the model; scanned PDFs being rejected outright instead of falling back to image rendering; a red test suite with stale `generateObject`/`@ai-sdk/google` mocks and a missing `PrismaService` in the constructor; the `geminiResponse` naming leftover from an earlier Gemini-based implementation.)*
 
 ### 🔵 Roadmap
-
-**Near-term:**
-- Extend the rasterization fallback beyond page 1 for multi-page scanned PDFs.
-- Image-level PII handling — likely a vision pre-pass that flags whether sensitive text is visible in the frame, surfaced to the user as a warning rather than silently sent through.
-- Replace the chat's regex-scraped invoice preview with structured tool output.
 
 **Mid-term (more of the Vercel AI SDK, used more deliberately):**
 - **`generateObject`/`streamObject` in place of `generateText` + manual `JSON.parse`.** Right now the model's raw text response is parsed and cast by hand inside a `try`/`catch`; the SDK's schema-driven structured output would let Zod validate the response directly instead of trusting a string.
@@ -55,7 +42,7 @@ Documented here deliberately rather than discovered later — this list is a sna
 - **Embeddings (`embed`/`embedMany`)** over stored invoices for genuine semantic search in chat ("show me invoices like this one") rather than exact-field matching.
 - **A provider-agnostic model registry.** The extraction service is hard-wired to Groq; abstracting model selection behind a small config layer would make it trivial to swap in Anthropic/OpenAI/a local model per environment — the same bring-your-own-model flexibility this agent already benefits from as a *user* of Groq.
 
-**Stretch (broader product-engineering scope):**
+**Stretch (broader scope):**
 - Queue-based batch processing (BullMQ) for bulk uploads instead of one synchronous request per file.
 - Rate limiting on the API itself (NestJS Throttler), plus explicit retry/backoff around Groq's 429s rather than a single caught exception.
 - OpenTelemetry tracing around the extraction pipeline, so latency and failures are visible per-span, not just per-log-line.
@@ -151,7 +138,7 @@ pnpm dev:backend
 cd apps/backend
 pnpm test
 ```
-23 tests, all passing.
+27 tests, all passing.
 
 ---
 
