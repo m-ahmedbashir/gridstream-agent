@@ -81,11 +81,16 @@ export class ExtractionService {
      * Main entry point called by ExtractionController.
      *
      * @param file - Multer file object from the multipart upload.
+     * @param textPayload - Pasted text, alongside or instead of a file.
+     * @param requestedModelKey - Per-request model override (e.g. the calling
+     *   user's saved preference). Falls back to this instance's configured
+     *   default when omitted or when it isn't a recognised registry key.
      * @returns A fully structured ExtractionResult.
      */
     async processFile(
         file?: Express.Multer.File,
         textPayload?: string,
+        requestedModelKey?: string,
     ): Promise<ExtractionResult> {
         const startTime = Date.now();
 
@@ -142,9 +147,16 @@ export class ExtractionService {
             }
         }
 
+        // An unrecognised override (e.g. a stale saved preference for a model
+        // that's since been removed from the registry) silently falls back to
+        // this instance's default rather than throwing — the request still succeeds.
+        const modelKey: ModelKey = requestedModelKey && requestedModelKey in MODEL_REGISTRY
+            ? (requestedModelKey as ModelKey)
+            : this.modelKey;
+
         // Fail loudly, not silently: a text-only model asked to read an image
         // would otherwise just get an image block it can't use.
-        const modelDescriptor = MODEL_REGISTRY[this.modelKey];
+        const modelDescriptor = MODEL_REGISTRY[modelKey];
         if ((buffersToPass?.length ?? 0) > 0 && !modelDescriptor.supportsVision) {
             throw new HttpException(
                 `The configured model (${modelDescriptor.modelId}) doesn't support image input, but this request requires reading an image or a rasterized PDF page. Choose a vision-capable model, or provide the invoice as text instead.`,
@@ -156,7 +168,7 @@ export class ExtractionService {
         let confidence: InvoiceConfidence;
         let imagePiiDetected = false;
         try {
-            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass);
+            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey);
             extractedInvoice = modelResult.invoice;
             confidence = modelResult.confidence;
             imagePiiDetected = modelResult.imagePiiDetected;
@@ -302,7 +314,8 @@ export class ExtractionService {
     private async callModel(
         sanitisedText: string,
         mimeType: string,
-        buffers?: Buffer[],
+        buffers: Buffer[] | undefined,
+        modelKey: ModelKey,
     ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence; imagePiiDetected: boolean }> {
         const messages: any[] = [
             {
@@ -385,7 +398,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         }
 
         const { text } = await generateText({
-            model: resolveModel(this.modelKey),
+            model: resolveModel(modelKey),
             messages,
         });
 
@@ -406,6 +419,11 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             this.logger.error('Failed to parse AI response as JSON:', text);
             throw new HttpException('Failed to parse AI response', HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /** Lists the registry so the frontend's model picker has a single source of truth, not a hand-duplicated copy. */
+    getModels() {
+        return Object.entries(MODEL_REGISTRY).map(([key, descriptor]) => ({ key, ...descriptor }));
     }
 
     async getStats() {
