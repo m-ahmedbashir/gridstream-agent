@@ -1,5 +1,5 @@
 import PageContainer from '@/components/layout/page-container';
-import { FileUploader } from '@/components/upload/file-uploader';
+import { UploadView } from './upload-view';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -13,8 +13,8 @@ export default function UploadPage() {
             pageTitle='Upload Invoices'
             pageDescription='Drag and drop your invoice files (PDF, image, Excel, CSV) to upload them for processing.'
         >
-            <div className='mx-auto max-w-2xl py-4'>
-                <FileUploader />
+            <div className='mx-auto w-full max-w-5xl py-4'>
+                <UploadView />
             </div>
         </PageContainer>
     );

@@ -1,24 +1,64 @@
 import { ExtractionService, ExtractionResult } from './extraction.service';
 import { ComplianceService } from '../compliance/compliance.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
-// Mock the entire ai and @ai-sdk/google modules so tests never touch the network
+// Mock the SDK boundary so tests never touch the network. The real service
+// calls `generateText` from `ai`, using a model built by `createGroq` from
+// `@ai-sdk/groq` — mock exactly those, not the earlier Gemini-era imports.
 jest.mock('ai', () => ({
-    generateObject: jest.fn().mockResolvedValue({
-        object: {
-            invoiceNumber: 'INV-001',
-            totalAmount: 1500,
-            currency: 'EUR',
-        },
+    generateText: jest.fn().mockResolvedValue({
+        text: JSON.stringify({
+            invoice: {
+                invoiceNumber: 'INV-001',
+                issueDate: '2024-01-01',
+                dueDate: '2024-01-31',
+                vendorName: 'ACME Corp',
+                vendorAddress: null,
+                customerName: null,
+                customerAddress: null,
+                lineItems: [],
+                subtotal: 1500,
+                taxAmount: 0,
+                totalAmount: 1500,
+                currency: 'EUR',
+            },
+            confidence: {
+                invoiceNumber: 1.0,
+                issueDate: 1.0,
+                dueDate: 0.8,
+                vendorName: 1.0,
+                vendorAddress: 0.0,
+                customerName: 0.0,
+                customerAddress: 0.0,
+                subtotal: 1.0,
+                taxAmount: 0.6,
+                totalAmount: 1.0,
+                currency: 1.0,
+                lineItems: 0.4,
+            },
+        }),
     }),
 }));
 
-jest.mock('@ai-sdk/google', () => ({
-    google: jest.fn().mockReturnValue('mock-model'),
+jest.mock('@ai-sdk/groq', () => ({
+    createGroq: jest.fn().mockReturnValue(jest.fn().mockReturnValue('mock-model')),
 }));
 
-import { generateObject } from 'ai';
+// pdf-parse is exercised directly by its own describe block below with its
+// own per-test overrides; this default covers the plain-text/CSV test cases
+// that never touch the PDF branch at all.
+jest.mock('pdf-parse', () => ({
+    PDFParse: jest.fn().mockImplementation(() => ({
+        getText: jest.fn().mockResolvedValue({ text: '' }),
+        getScreenshot: jest.fn().mockResolvedValue({ pages: [{ data: new Uint8Array([1, 2, 3]) }] }),
+        destroy: jest.fn().mockResolvedValue(undefined),
+    })),
+}));
+
+import { generateText } from 'ai';
+import { PDFParse } from 'pdf-parse';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,15 +82,36 @@ function makeFile(
     };
 }
 
+function makePrismaMock() {
+    return {
+        extractionLog: {
+            create: jest.fn().mockResolvedValue({ id: 'log-1' }),
+        },
+    } as unknown as PrismaService;
+}
+
+/** One mock PDFParse instance covering whichever method the test needs. */
+function mockPdfParseInstance(opts: { text?: string; screenshotPages?: Array<{ data: Uint8Array }> | null } = {}) {
+    return {
+        getText: jest.fn().mockResolvedValue({ text: opts.text ?? '' }),
+        getScreenshot: opts.screenshotPages === null
+            ? jest.fn().mockRejectedValue(new Error('rasterization failed'))
+            : jest.fn().mockResolvedValue({ pages: opts.screenshotPages ?? [{ data: new Uint8Array([1, 2, 3]) }] }),
+        destroy: jest.fn().mockResolvedValue(undefined),
+    };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ExtractionService', () => {
     let service: ExtractionService;
     let complianceService: ComplianceService;
+    let prisma: PrismaService;
 
     beforeEach(() => {
         complianceService = new ComplianceService();
-        service = new ExtractionService(complianceService);
+        prisma = makePrismaMock();
+        service = new ExtractionService(complianceService, prisma);
         jest.clearAllMocks();
     });
 
@@ -68,12 +129,12 @@ describe('ExtractionService', () => {
                 piiDetected: false,
             });
             expect(typeof result.maskedText).toBe('string');
-            expect(typeof result.geminiResponse).toBe('object');
-            expect(result.geminiResponse.invoiceNumber).toBe('INV-001');
+            expect(typeof result.extractedInvoice).toBe('object');
+            expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
             expect(typeof result.processedAt).toBe('string');
         });
 
-        it('should call ComplianceService.mask() before calling Gemini', async () => {
+        it('should call ComplianceService.mask() before calling Groq', async () => {
             const maskSpy = jest.spyOn(complianceService, 'mask');
             const file = makeFile('Contact finance@corp.com', 'text/plain');
 
@@ -93,12 +154,12 @@ describe('ExtractionService', () => {
             expect(result.maskedText).toContain('[REDACTED:EMAIL]');
         });
 
-        it('should call generateObject (Gemini) exactly once per file', async () => {
+        it('should call generateText (Groq) exactly once per file', async () => {
             const file = makeFile('Total: 500 USD', 'text/plain');
 
             await service.processFile(file);
 
-            expect(generateObject).toHaveBeenCalledTimes(1);
+            expect(generateText).toHaveBeenCalledTimes(1);
         });
 
         it('should throw UnsupportedMediaTypeException for disallowed MIME types', async () => {
@@ -115,8 +176,131 @@ describe('ExtractionService', () => {
 
             const result = await service.processFile(file);
 
-            expect(result.file.mimeType).toBe('text/csv');
+            expect(result.file?.mimeType).toBe('text/csv');
             expect(result.maskedText).toContain('ACME Corp');
+        });
+
+        it('should write an ExtractionLog row on success', async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await service.processFile(file);
+
+            expect(prisma.extractionLog.create).toHaveBeenCalledTimes(1);
+            expect(prisma.extractionLog.create).toHaveBeenCalledWith(
+                expect.objectContaining({ data: expect.objectContaining({ success: true }) }),
+            );
+        });
+    });
+
+    describe('processFile() — PDF handling', () => {
+        it('should extract the PDF text layer and send it to Groq', async () => {
+            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() =>
+                mockPdfParseInstance({ text: 'Invoice total: 2000 EUR' }),
+            );
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'invoice.pdf');
+
+            const result = await service.processFile(file);
+
+            expect(result.maskedText).toContain('Invoice total: 2000 EUR');
+            expect(generateText).toHaveBeenCalledTimes(1);
+        });
+
+        it('should render page 1 to an image and use the vision path when a PDF has no text layer', async () => {
+            // First construction (extractText → getText) reports no text;
+            // second construction (renderPdfPagesToImages → getScreenshot) succeeds.
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '   ' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({ screenshotPages: [{ data: new Uint8Array([9, 9, 9]) }] }));
+
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'scanned.pdf');
+
+            const result = await service.processFile(file);
+
+            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
+        });
+
+        it('should render every rasterized page as a separate image block sent to Groq', async () => {
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({
+                    screenshotPages: [
+                        { data: new Uint8Array([1]) },
+                        { data: new Uint8Array([2]) },
+                        { data: new Uint8Array([3]) },
+                    ],
+                }));
+
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'multipage-scanned.pdf');
+            await service.processFile(file);
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const imageBlocks = callArgs.messages[0].content.filter((part: any) => part.type === 'image');
+            expect(imageBlocks).toHaveLength(3);
+        });
+
+        it('should throw when a PDF has no text layer and rasterization also fails', async () => {
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({ screenshotPages: null })); // getScreenshot rejects
+
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'unreadable.pdf');
+
+            await expect(service.processFile(file)).rejects.toThrow(
+                'could not be rendered as an image',
+            );
+            expect(generateText).not.toHaveBeenCalled();
+        });
+
+        it('should proceed via the text path if a scanned PDF has pasted text alongside it (no rasterization needed)', async () => {
+            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() =>
+                mockPdfParseInstance({ text: '' }),
+            );
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'scanned.pdf');
+
+            const result = await service.processFile(file, 'Invoice total: 750 USD');
+
+            expect(result.maskedText).toContain('Invoice total: 750 USD');
+            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(PDFParse).toHaveBeenCalledTimes(1); // only the text-layer attempt — no rasterization fallback triggered
+        });
+    });
+
+    describe('processFile() — imagePiiDetected', () => {
+        function makeImageFile(name = 'photo.png') {
+            return makeFile('fake png bytes', 'image/png', name);
+        }
+
+        it('defaults to false when the model does not report the field', async () => {
+            const result = await service.processFile(makeImageFile());
+            expect(result.imagePiiDetected).toBe(false);
+        });
+
+        it('is true when an image was sent and the model flags visible PII', async () => {
+            (generateText as jest.Mock).mockResolvedValueOnce({
+                text: JSON.stringify({
+                    invoice: { invoiceNumber: 'INV-002' },
+                    confidence: {},
+                    imagePiiDetected: true,
+                }),
+            });
+
+            const result = await service.processFile(makeImageFile());
+            expect(result.imagePiiDetected).toBe(true);
+        });
+
+        it('is forced to false even if the model claims it when no image was actually sent', async () => {
+            (generateText as jest.Mock).mockResolvedValueOnce({
+                text: JSON.stringify({
+                    invoice: { invoiceNumber: 'INV-003' },
+                    confidence: {},
+                    imagePiiDetected: true, // the model shouldn't say this with no image, but never trust it
+                }),
+            });
+
+            const file = makeFile('Total: 500 USD', 'text/plain');
+            const result = await service.processFile(file);
+            expect(result.imagePiiDetected).toBe(false);
         });
     });
 });

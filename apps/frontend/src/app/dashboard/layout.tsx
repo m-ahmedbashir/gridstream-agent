@@ -1,5 +1,6 @@
 import KBar from '@/components/kbar';
 import AppSidebar from '@/components/layout/app-sidebar';
+import FloatingAssistantButton from '@/components/layout/floating-assistant-button';
 import Header from '@/components/layout/header';
 import { InfoSidebar } from '@/components/layout/info-sidebar';
 import { InfobarProvider } from '@/components/ui/infobar';
@@ -33,6 +34,7 @@ export default async function DashboardLayout({
             <Header />
             {/* page main content */}
             {children}
+            <FloatingAssistantButton />
             {/* page main content ends */}
           </SidebarInset>
           <InfoSidebar side='right' />

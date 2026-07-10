@@ -30,6 +30,14 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
+    title: 'My Assistant',
+    url: '/dashboard/chat',
+    icon: 'robot',
+    shortcut: ['c', 'c'],
+    isActive: false,
+    items: []
+  },
+  {
     title: 'Account',
     url: '#',
     icon: 'account',
