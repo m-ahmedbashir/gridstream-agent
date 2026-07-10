@@ -89,13 +89,23 @@ export class ExtractionController {
         // Note: never log `apiKeyOverride` — it's a decrypted plaintext provider key.
         let modelKey: string | undefined;
         let apiKeyOverride: string | undefined;
+        let userProcessingMode: string | undefined;
         if (dto.userId) {
-            [modelKey, apiKeyOverride] = await Promise.all([
-                this.usersService.getSettings(dto.userId).then((s) => s.modelKey),
+            const [settings, key] = await Promise.all([
+                this.usersService.getSettings(dto.userId),
                 this.usersService.getDecryptedApiKey(dto.userId),
             ]);
+            modelKey = settings.modelKey;
+            userProcessingMode = settings.processingMode;
+            apiKeyOverride = key;
         }
 
-        return this.extractionService.processFile(file, dto.text, modelKey, apiKeyOverride);
+        return this.extractionService.processFile(
+            file,
+            dto.text,
+            modelKey,
+            apiKeyOverride,
+            dto.processingMode || userProcessingMode,
+        );
     }
 }

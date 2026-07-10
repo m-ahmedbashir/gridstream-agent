@@ -1,6 +1,8 @@
 import { ExtractionService, ExtractionResult } from './extraction.service';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { OcrService } from './ocr.service';
+
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,16 @@ jest.mock('pdf-parse', () => ({
         getScreenshot: jest.fn().mockResolvedValue({ pages: [{ data: new Uint8Array([1, 2, 3]) }] }),
         destroy: jest.fn().mockResolvedValue(undefined),
     })),
+}));
+
+// OcrService imports tesseract.js — mock the module so no real worker is ever
+// created during tests. Individual OCR tests inject their own stub OcrService
+// via the constructor, so this mock only guards import-time side-effects.
+jest.mock('tesseract.js', () => ({
+    createWorker: jest.fn().mockResolvedValue({
+        recognize: jest.fn().mockResolvedValue({ data: { text: '', confidence: 0 } }),
+        terminate: jest.fn().mockResolvedValue(undefined),
+    }),
 }));
 
 import { generateObject } from 'ai';
@@ -439,6 +451,121 @@ describe('ExtractionService', () => {
             );
             expect(logCall![0].data.errorMessage).not.toContain('sk-users-own-decrypted-key');
             expect(logCall![0].data.errorMessage).toContain('[REDACTED:API_KEY]');
+        });
+    });
+    describe('processFile() — local-OCR mode (Phase 4)', () => {
+        /** A minimal OcrService stub that returns controllable text + confidence. */
+        function makeOcrService(text: string, confidence = 90): OcrService {
+            return { recognizeText: jest.fn().mockResolvedValue({ text, confidence }) } as unknown as OcrService;
+        }
+
+        it('converts an image to text via OCR instead of sending it to the vision model', async () => {
+            const ocrService = makeOcrService('Invoice total: 800 EUR');
+            const ocrService_service = new ExtractionService(complianceService, prisma, undefined, ocrService, 'local-ocr');
+
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+            const result = await ocrService_service.processFile(file);
+
+            // OCR text flows into maskedText, not an image block
+            expect(result.maskedText).toContain('Invoice total: 800 EUR');
+            expect(result.ocrUsed).toBe(true);
+            // generateObject should have been called with text, not image buffers
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
+            const imageBlocks = callArgs.messages[0].content.filter((p: any) => p.type === 'image');
+            expect(imageBlocks).toHaveLength(0);
+        });
+
+        it('masks PII found in OCR\'d image text before the model sees it', async () => {
+            const ocrService = makeOcrService('Contact: user@secret.com\nTotal: 500 USD');
+            const svc = new ExtractionService(complianceService, prisma, undefined, ocrService, 'local-ocr');
+            const maskSpy = jest.spyOn(complianceService, 'mask');
+
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+            const result = await svc.processFile(file);
+
+            // mask() must have been called with the OCR text
+            expect(maskSpy).toHaveBeenCalledWith(expect.stringContaining('user@secret.com'));
+            // the email must be gone from what the model sees
+            expect(result.maskedText).not.toContain('user@secret.com');
+            expect(result.maskedText).toContain('[REDACTED:EMAIL]');
+            expect(result.piiDetected).toBe(true);
+        });
+
+        it('sets ocrUsed=true in the result and ExtractionLog when OCR ran', async () => {
+            const ocrService = makeOcrService('Invoice total: 100 USD');
+            const svc = new ExtractionService(complianceService, prisma, undefined, ocrService, 'local-ocr');
+
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+            const result = await svc.processFile(file);
+
+            expect(result.ocrUsed).toBe(true);
+            const logData = (prisma.extractionLog.create as jest.Mock).mock.calls[0][0].data;
+            expect(logData.ocrUsed).toBe(true);
+        });
+
+        it('does not send an image to the model when local-ocr mode is active', async () => {
+            // Even a vision-capable model should receive no image buffers in local-ocr mode
+            const ocrService = makeOcrService('Total: 200 USD');
+            const svc = new ExtractionService(complianceService, prisma, 'groq:llama-4-scout', ocrService, 'local-ocr');
+
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+            await svc.processFile(file);
+
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
+            const imageBlocks = callArgs.messages[0].content.filter((p: any) => p.type === 'image');
+            expect(imageBlocks).toHaveLength(0);
+        });
+
+        it('caps field confidence when Tesseract confidence is low', async () => {
+            // Low Tesseract confidence (30) → ceiling 0.4
+            const ocrService = makeOcrService('Invoice: INV-LOW', 30);
+            const svc = new ExtractionService(complianceService, prisma, undefined, ocrService, 'local-ocr');
+
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+            const result = await svc.processFile(file);
+
+            // The mock returns 1.0 for invoiceNumber — must be capped to 0.4
+            expect(result.confidence.invoiceNumber).toBeLessThanOrEqual(0.4);
+        });
+
+        it('OCRs each page of a scanned PDF separately and concatenates the text', async () => {
+            // First PDFParse call: getText → empty (no text layer)
+            // Second PDFParse call: getScreenshot → two pages
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({
+                    screenshotPages: [
+                        { data: new Uint8Array([1]) },
+                        { data: new Uint8Array([2]) },
+                    ],
+                }));
+
+            const ocrService = makeOcrService('Page text');
+            const svc = new ExtractionService(complianceService, prisma, undefined, ocrService, 'local-ocr');
+            const file = makeFile('%PDF-1.4 fake', 'application/pdf', 'scanned.pdf');
+
+            const result = await svc.processFile(file);
+
+            // recognizeText called once per page
+            expect(ocrService.recognizeText).toHaveBeenCalledTimes(2);
+            expect(result.ocrUsed).toBe(true);
+            // No image buffers sent to model
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
+            const imageBlocks = callArgs.messages[0].content.filter((p: any) => p.type === 'image');
+            expect(imageBlocks).toHaveLength(0);
+        });
+
+        it('falls back to vision mode for images when no OcrService is injected', async () => {
+            // service has no ocrService — should behave like vision mode
+            const svc = new ExtractionService(complianceService, prisma, 'groq:llama-4-scout', undefined, 'local-ocr');
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+
+            await svc.processFile(file);
+
+            // Image buffer must still have been sent (graceful fallback to vision)
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
+            const imageBlocks = callArgs.messages[0].content.filter((p: any) => p.type === 'image');
+            expect(imageBlocks).toHaveLength(1);
         });
     });
 });

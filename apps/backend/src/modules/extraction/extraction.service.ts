@@ -155,7 +155,7 @@ export class ExtractionService {
 
         let rawText = [extractedFileText, textPayload].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
 
-        const isVisionMode = processingMode === 'vision';
+        const isVisionMode = processingMode === 'vision' || (processingMode === 'local-ocr' && !this.ocrService);
         let buffersToPass = isImage && file && isVisionMode ? [file.buffer] : undefined;
         let mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
