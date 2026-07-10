@@ -1,6 +1,6 @@
 # Phase 5: `generateObject`/`streamObject` Migration
 
-**Status:** ⏳ PENDING
+**Status:** ✅ DONE
 **Depends on:** nothing — independent of phases 1–4, can be done in any order relative to them
 
 ---
@@ -28,7 +28,15 @@ This is a quality/correctness improvement to something that already works, not a
 
 ## Summary
 
-**Phase 5: Not started.**
+**Phase 5: Complete.**
+
+### What was done:
+- `@opp/shared` — `InvoiceSchema` fields made nullable (truthful types), `InvoiceConfidenceSchema` derived from Zod (replaces hand-written type), `ExtractionResponseSchema` added as the combined wrapper for `generateObject`.
+- `extraction.service.ts` — `generateText` + `JSON.parse` replaced with `generateObject(ExtractionResponseSchema)`. Prompt simplified (schema describes structure; semantic rubric and image-PII guidance kept). Manual parse error path and `HttpException('Failed to parse AI response')` removed — Zod surfaces validation errors itself.
+- `extraction.service.spec.ts` — All 27 tests updated to mock `generateObject` (returning `{ object: {...} }`) and pass green.
+- `pnpm run typecheck` — 4 tasks, 0 errors.
+- `pnpm test` (extraction suite) — 27 passed, 0 failed.
+
 
 ### What "done" looks like:
 - No manual `JSON.parse` of model output left in the extraction path
