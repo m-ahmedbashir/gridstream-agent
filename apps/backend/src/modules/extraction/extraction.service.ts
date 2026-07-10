@@ -1,10 +1,10 @@
-import { Injectable, Logger, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { createGroq } from '@ai-sdk/groq';
+import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
 import { generateText } from 'ai';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { type Invoice, type InvoiceConfidence } from '@opp/shared';
+import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, resolveModel, type ModelKey } from './model-registry';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,13 +38,12 @@ export interface ExtractionResult {
  * Orchestrates the full invoice extraction pipeline:
  *   1. Decode the uploaded file buffer into text.
  *   2. Mask PII via ComplianceService before touching any external service.
- *   3. Send the sanitised content to Groq with a structured extraction prompt.
+ *   3. Send the sanitised content to the configured model provider with a structured extraction prompt.
  *   4. Return a typed ExtractionResult.
  */
 @Injectable()
 export class ExtractionService {
     private readonly logger = new Logger(ExtractionService.name);
-    private readonly groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 
     private static readonly MIME_TO_SOURCE: Record<string, string> = {
         'text/plain': 'TEXT',
@@ -67,6 +66,13 @@ export class ExtractionService {
     constructor(
         private readonly complianceService: ComplianceService,
         private readonly prisma: PrismaService,
+        /**
+         * Which registry entry to extract with. Fixed per-instance for now —
+         * Phase 2 (see roadmap/phase2.md) will resolve this per-user instead.
+         * @Optional() so Nest's DI doesn't try to resolve a provider for a
+         * plain string-literal type and instead lets the default value apply.
+         */
+        @Optional() private readonly modelKey: ModelKey = DEFAULT_MODEL_KEY,
     ) { }
 
     // ── Public API ─────────────────────────────────────────────────────────────
@@ -136,14 +142,24 @@ export class ExtractionService {
             }
         }
 
+        // Fail loudly, not silently: a text-only model asked to read an image
+        // would otherwise just get an image block it can't use.
+        const modelDescriptor = MODEL_REGISTRY[this.modelKey];
+        if ((buffersToPass?.length ?? 0) > 0 && !modelDescriptor.supportsVision) {
+            throw new HttpException(
+                `The configured model (${modelDescriptor.modelId}) doesn't support image input, but this request requires reading an image or a rasterized PDF page. Choose a vision-capable model, or provide the invoice as text instead.`,
+                HttpStatus.UNPROCESSABLE_ENTITY,
+            );
+        }
+
         let extractedInvoice: Invoice;
         let confidence: InvoiceConfidence;
         let imagePiiDetected = false;
         try {
-            const groqResult = await this.callGroq(maskedText, mimeTypeToPass, buffersToPass);
-            extractedInvoice = groqResult.invoice;
-            confidence = groqResult.confidence;
-            imagePiiDetected = groqResult.imagePiiDetected;
+            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass);
+            extractedInvoice = modelResult.invoice;
+            confidence = modelResult.confidence;
+            imagePiiDetected = modelResult.imagePiiDetected;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -160,7 +176,7 @@ export class ExtractionService {
                 },
             });
 
-            this.logger.error('Failed to extract data via Groq API', error);
+            this.logger.error('Failed to extract data via the AI provider', error);
             if (error instanceof Error && error.message.includes('429')) {
                 throw new HttpException('Rate limit exceeded. Please try again in a moment.', HttpStatus.TOO_MANY_REQUESTS);
             }
@@ -279,10 +295,11 @@ export class ExtractionService {
     }
 
     /**
-     * Sends the sanitised text and/or image buffers to Groq and extracts invoice data
-     * alongside a per-field confidence score (0–1) and an image-PII flag.
+     * Sends the sanitised text and/or image buffers to the configured model
+     * (resolved via the model registry) and extracts invoice data alongside a
+     * per-field confidence score (0–1) and an image-PII flag.
      */
-    private async callGroq(
+    private async callModel(
         sanitisedText: string,
         mimeType: string,
         buffers?: Buffer[],
@@ -368,7 +385,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         }
 
         const { text } = await generateText({
-            model: this.groq('meta-llama/llama-4-scout-17b-16e-instruct'),
+            model: resolveModel(this.modelKey),
             messages,
         });
 
