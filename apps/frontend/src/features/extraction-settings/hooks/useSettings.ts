@@ -8,9 +8,16 @@ export type ExtractionMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
 export interface UserSettings {
   extractionMode: ExtractionMode;
   modelKey: string;
+  /** Whether a BYOK provider key is saved — never the key itself, which is write-only once saved. */
+  hasApiKey: boolean;
 }
 
-export type SettingsUpdate = Partial<UserSettings>;
+export interface SettingsUpdate {
+  extractionMode?: ExtractionMode;
+  modelKey?: string;
+  /** Plaintext key to save (sent once, over HTTPS in production, encrypted server-side before storage). Pass '' to remove a saved key. */
+  apiKey?: string;
+}
 
 function resolveUserId(userId: string | null | undefined) {
   return userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
