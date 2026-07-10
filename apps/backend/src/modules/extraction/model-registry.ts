@@ -78,3 +78,24 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
             return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
     }
 }
+
+// ── Processing mode ──────────────────────────────────────────────────────────
+
+/**
+ * How images and scanned PDF pages get read:
+ *  - 'vision': sent as image content parts to a vision-capable model (the
+ *    original behavior). Better on messy/handwritten/angled scans.
+ *  - 'local-ocr': read locally via Tesseract before anything leaves the
+ *    server, so the resulting text goes through the same PII-masking
+ *    pipeline that already protects typed/pasted text. More private, weaker
+ *    on messy scans — see OcrService and roadmap/phase4.md.
+ */
+export type ProcessingMode = 'vision' | 'local-ocr';
+
+export const PROCESSING_MODES: readonly ProcessingMode[] = ['vision', 'local-ocr'];
+
+export const DEFAULT_PROCESSING_MODE: ProcessingMode = 'vision';
+
+export function isProcessingMode(value: unknown): value is ProcessingMode {
+    return typeof value === 'string' && (PROCESSING_MODES as readonly string[]).includes(value);
+}
