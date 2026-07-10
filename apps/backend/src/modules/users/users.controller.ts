@@ -1,5 +1,5 @@
 import { Controller, Get, Put, Body, Query } from '@nestjs/common';
-import { UsersService } from './users.service';
+import { UsersService, type SettingsUpdate } from './users.service';
 
 @Controller('users')
 export class UsersController {
@@ -13,8 +13,8 @@ export class UsersController {
   @Put('settings')
   async updateSettings(
     @Query('userId') userId: string,
-    @Body() body: { extractionMode: string },
+    @Body() body: SettingsUpdate,
   ) {
-    return this.usersService.updateSettings(userId, body.extractionMode);
+    return this.usersService.updateSettings(userId, body);
   }
 }

@@ -361,4 +361,46 @@ describe('ExtractionService', () => {
             expect(generateText).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe('getModels()', () => {
+        it('returns the registry as a flat list the frontend can render directly', () => {
+            const models = service.getModels();
+            expect(models).toContainEqual(
+                expect.objectContaining({ key: 'groq:llama-4-scout', supportsVision: true }),
+            );
+            expect(models).toContainEqual(
+                expect.objectContaining({ key: 'groq:llama-3.3-70b', supportsVision: false }),
+            );
+        });
+    });
+
+    describe('processFile() — per-request modelKey override (Phase 2)', () => {
+        it('uses the per-request modelKey instead of the instance default when one is provided', async () => {
+            // service defaults to groq:llama-4-scout (no constructor override)
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await service.processFile(file, undefined, 'openai:gpt-4o');
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('openai-model:gpt-4o');
+        });
+
+        it('falls back to the instance default when the requested modelKey is not a recognised registry key', async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await service.processFile(file, undefined, 'not-a-real-model');
+
+            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            expect(callArgs.model).toBe('groq-model:meta-llama/llama-4-scout-17b-16e-instruct');
+        });
+
+        it('still applies the vision-capability guard to a per-request override, not just the instance default', async () => {
+            const file = makeFile('fake png bytes', 'image/png', 'photo.png');
+
+            await expect(
+                service.processFile(file, undefined, 'groq:llama-3.3-70b'),
+            ).rejects.toThrow("doesn't support image input");
+            expect(generateText).not.toHaveBeenCalled();
+        });
+    });
 });

@@ -31,6 +31,13 @@ export const UploadInvoiceSchema = z.object({
      * Raw text content provided directly via the UI text area.
      */
     text: z.string().optional(),
+
+    /**
+     * Clerk user id, if known — used to look up the caller's saved model
+     * preference. Omitted for anonymous/local-dev callers, who get the
+     * service's own default model.
+     */
+    userId: z.string().optional(),
 });
 
 export class UploadInvoiceDto extends createZodDto(UploadInvoiceSchema) { }
