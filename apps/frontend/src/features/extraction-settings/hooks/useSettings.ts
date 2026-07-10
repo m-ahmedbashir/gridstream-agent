@@ -7,11 +7,18 @@ export type ExtractionMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
 
 export interface UserSettings {
   extractionMode: ExtractionMode;
+  modelKey: string;
+}
+
+export type SettingsUpdate = Partial<UserSettings>;
+
+function resolveUserId(userId: string | null | undefined) {
+  return userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
 }
 
 /**
- * Hook to manage user extraction settings
- * Fetches and updates extraction mode from backend using TanStack React Query
+ * Hook to manage user extraction settings (extraction mode + model preference).
+ * Fetches and updates settings from the backend using TanStack React Query.
  */
 export function useSettings() {
   const { userId } = useAuth();
@@ -20,26 +27,24 @@ export function useSettings() {
   const { data: settings, isPending: loading, error, refetch } = useQuery<UserSettings>({
     queryKey: ['userSettings', userId],
     queryFn: async () => {
-      // If no valid auth user, fallback to local storage or default user (or throw error)
-      const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
-      
+      const currentUserId = resolveUserId(userId);
+
       const response = await fetch(`http://localhost:3001/users/settings?userId=${currentUserId}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch settings: ${response.statusText}`);
       }
       return response.json();
     },
-    // Only fire query when we have at least mounted on client, but it handles suspense anyway
   });
 
   const { mutateAsync: updateSettingsMutation } = useMutation({
-    mutationFn: async (extractionMode: ExtractionMode) => {
-      const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
+    mutationFn: async (update: SettingsUpdate) => {
+      const currentUserId = resolveUserId(userId);
 
       const response = await fetch(`http://localhost:3001/users/settings?userId=${currentUserId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ extractionMode })
+        body: JSON.stringify(update),
       });
 
       if (!response.ok) {
@@ -48,18 +53,22 @@ export function useSettings() {
       return response.json();
     },
     onSuccess: (newSettings) => {
-      // Invalidate and aggressively refetch userSettings
-      queryClient.setQueryData(['userSettings', userId], newSettings);
-    }
+      // Merge rather than replace — the PUT response only reflects the fields
+      // that were sent, and we don't want a partial update to blank out the rest.
+      queryClient.setQueryData(['userSettings', userId], (previous: UserSettings | undefined) => ({
+        ...previous,
+        ...newSettings,
+      }));
+    },
   });
 
   return {
     settings,
     loading,
     error: error ? error.message : null,
-    updateSettings: async (mode: ExtractionMode) => {
+    updateSettings: async (update: SettingsUpdate) => {
       try {
-        await updateSettingsMutation(mode);
+        await updateSettingsMutation(update);
         return true;
       } catch (err) {
         return false;

@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
+import { useAuth } from '@clerk/nextjs';
 import { toast } from 'sonner';
 import type { Invoice } from '@opp/shared';
 
@@ -22,11 +23,12 @@ export type ExtractInvoiceVariables = {
     text?: string;
 };
 
-async function uploadInvoiceRequest(variables: ExtractInvoiceVariables): Promise<ExtractionResult> {
+async function uploadInvoiceRequest(variables: ExtractInvoiceVariables, userId: string): Promise<ExtractionResult> {
     const { file, text } = variables;
     const formData = new FormData();
     if (file) formData.append('file', file);
     if (text) formData.append('text', text);
+    formData.append('userId', userId); // lets the backend look up the caller's saved model preference
 
     const itemName = file ? file.name : 'pasted text';
 
@@ -65,8 +67,14 @@ async function uploadInvoiceRequest(variables: ExtractInvoiceVariables): Promise
 }
 
 export function useExtractInvoice() {
+    const { userId } = useAuth();
+
     return useMutation({
-        mutationFn: uploadInvoiceRequest,
+        mutationFn: (variables: ExtractInvoiceVariables) => {
+            // Same resolution order as useSettings.ts's resolveUserId — keep these in sync.
+            const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
+            return uploadInvoiceRequest(variables, currentUserId);
+        },
         onSuccess: (_, variables) => {
             const itemName = variables.file ? variables.file.name : 'pasted text';
             toast.success(`Extracted data for ${itemName}`);
