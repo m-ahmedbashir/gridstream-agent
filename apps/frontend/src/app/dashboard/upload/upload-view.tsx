@@ -56,7 +56,7 @@ export function UploadView() {
                 </div>
                 <Select 
                     value={settings?.extractionMode || 'MANUAL_REVIEW'} 
-                    onValueChange={(val) => updateSettings(val as ExtractionMode)}
+                    onValueChange={(val) => updateSettings({ extractionMode: val as ExtractionMode })}
                     disabled={settingsLoading || isPending}
                 >
                     <SelectTrigger className="w-[180px] h-9 text-xs bg-white dark:bg-zinc-950">

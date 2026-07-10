@@ -16,6 +16,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ExtractionService, ExtractionResult } from './extraction.service';
 import { UploadInvoiceDto } from './dto/upload-invoice.dto';
+import { UsersService } from '../users/users.service';
 
 /**
  * ExtractionController
@@ -27,19 +28,29 @@ import { UploadInvoiceDto } from './dto/upload-invoice.dto';
 export class ExtractionController {
     private readonly logger = new Logger(ExtractionController.name);
 
-    constructor(private readonly extractionService: ExtractionService) { }
+    constructor(
+        private readonly extractionService: ExtractionService,
+        private readonly usersService: UsersService,
+    ) { }
+
+    /** GET /extraction/models — the registry, so the frontend's picker never hand-duplicates it. */
+    @Get('models')
+    getModels() {
+        return this.extractionService.getModels();
+    }
 
     /**
      * POST /extraction/upload
      *
      * Accepts a single multipart file field named "file" plus optional
-     * metadata fields (invoiceType, currency, notes) defined in UploadInvoiceDto.
+     * metadata fields (invoiceType, currency, notes, userId) defined in UploadInvoiceDto.
      *
      * Pipeline:
      *   1. Multer stores the file in memory (no disk writes).
      *   2. NestJS validates file size (≤ 10 MB) and MIME type.
-     *   3. ExtractionService.processFile() masks PII and calls Gemini.
-     *   4. Returns a structured ExtractionResult JSON response.
+     *   3. If a userId was supplied, look up that user's saved model preference.
+     *   4. ExtractionService.processFile() masks PII and calls the configured model.
+     *   5. Returns a structured ExtractionResult JSON response.
      */
     @Get('stats')
     async getStats() {
@@ -74,6 +85,11 @@ export class ExtractionController {
             `Received upload request: file=${file?.originalname ?? 'none'} text=${dto.text ? 'provided' : 'none'}`,
         );
 
-        return this.extractionService.processFile(file, dto.text);
+        // No userId supplied (anonymous/local-dev caller) just uses ExtractionService's own default.
+        const modelKey = dto.userId
+            ? (await this.usersService.getSettings(dto.userId)).modelKey
+            : undefined;
+
+        return this.extractionService.processFile(file, dto.text, modelKey);
     }
 }
