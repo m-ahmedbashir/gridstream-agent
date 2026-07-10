@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@clerk/nextjs';
 import { useSaveInvoice } from '@/features/invoice-upload/use-save-invoice';
-import { IconDeviceFloppy, IconPencil, IconCheck } from '@tabler/icons-react';
+import { IconDeviceFloppy, IconPencil, IconCheck, IconAlertTriangle } from '@tabler/icons-react';
 import type { Invoice, InvoiceConfidence } from '@opp/shared';
 
 export interface ExtractionResultData {
@@ -16,6 +16,7 @@ export interface ExtractionResultData {
     mimeType: string;
     maskedText: string;
     piiDetected: boolean;
+    imagePiiDetected?: boolean;
     extractedInvoice: Invoice;
     confidence?: InvoiceConfidence;
     avgConfidence?: number;
@@ -143,6 +144,17 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                  {isPending ? 'Saving...' : 'Save Invoice'}
                </Button>
             </div>
+
+            {data.result.imagePiiDetected && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                <IconAlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  This document appears to show personal or financial details (email, phone, IBAN, or card number)
+                  directly in the image. Text-based PII masking can&apos;t redact pixels — review the fields below
+                  carefully before saving.
+                </span>
+              </div>
+            )}
 
             {/* DETAILS SECTION */}
             <div className='space-y-4'>

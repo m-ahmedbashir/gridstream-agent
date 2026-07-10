@@ -19,6 +19,8 @@ export interface ExtractionResult {
     file?: ProcessedFile;
     maskedText: string;
     piiDetected: boolean;
+    /** True when the model reports seeing raw PII (email/phone/IBAN/card) printed in an image — text masking can't reach pixels. */
+    imagePiiDetected: boolean;
     extractedInvoice: Invoice;
     confidence: InvoiceConfidence;
     avgConfidence: number;
@@ -110,18 +112,21 @@ export class ExtractionService {
         }
 
         const isImage = file?.mimetype.startsWith('image/');
-        let bufferToPass = isImage ? file?.buffer : undefined;
+        let buffersToPass = isImage && file ? [file.buffer] : undefined;
         let mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
         // A PDF with no usable text (no text layer, and nothing pasted alongside it)
         // is almost always a scanned/image-only document. Rather than failing, render
-        // its first page to an image and route it through the same vision path used
-        // for direct image uploads.
+        // its pages to images and route them through the same vision path used for
+        // direct image uploads. Capped at MAX_RASTERIZED_PDF_PAGES so a huge document
+        // doesn't balloon into dozens of images in one request.
         if (file?.mimetype === 'application/pdf' && !rawText.trim()) {
             try {
-                bufferToPass = await this.renderPdfPageToImage(file);
+                buffersToPass = await this.renderPdfPagesToImages(file);
                 mimeTypeToPass = 'image/png';
-                this.logger.log('PDF has no text layer — rendered page 1 to an image for vision extraction.');
+                this.logger.log(
+                    `PDF has no text layer — rendered ${buffersToPass.length} page(s) to images for vision extraction.`,
+                );
             } catch (error) {
                 this.logger.error('Failed to rasterize PDF for fallback extraction', error);
                 throw new HttpException(
@@ -133,10 +138,12 @@ export class ExtractionService {
 
         let extractedInvoice: Invoice;
         let confidence: InvoiceConfidence;
+        let imagePiiDetected = false;
         try {
-            const groqResult = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
+            const groqResult = await this.callGroq(maskedText, mimeTypeToPass, buffersToPass);
             extractedInvoice = groqResult.invoice;
             confidence = groqResult.confidence;
+            imagePiiDetected = groqResult.imagePiiDetected;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -172,6 +179,7 @@ export class ExtractionService {
                 originalFileName: file?.originalname ?? null,
                 fileSizeBytes: file?.size ?? null,
                 piiDetected,
+                imagePiiDetected,
                 processingTimeMs,
                 avgConfidence,
                 success: true,
@@ -188,6 +196,7 @@ export class ExtractionService {
             }),
             maskedText,
             piiDetected,
+            imagePiiDetected,
             extractedInvoice,
             confidence,
             avgConfidence,
@@ -237,35 +246,47 @@ export class ExtractionService {
         return '';
     }
 
+    /** Cap on how many rasterized PDF pages get sent to the model in one request. */
+    private static readonly MAX_RASTERIZED_PDF_PAGES = 5;
+
     /**
-     * Renders the first page of a PDF to a PNG image via pdf-parse's bundled
-     * rasterizer — used as a fallback for scanned/image-only PDFs that have
-     * no extractable text layer, so they can go through the vision path
-     * instead of failing outright.
+     * Renders the first N pages of a PDF to PNG images via pdf-parse's bundled
+     * rasterizer — used as a fallback for scanned/image-only PDFs that have no
+     * extractable text layer, so they can go through the vision path instead
+     * of failing outright. Capped so a huge document doesn't balloon into
+     * dozens of images in a single request.
      */
-    private async renderPdfPageToImage(file: Express.Multer.File): Promise<Buffer> {
+    private async renderPdfPagesToImages(file: Express.Multer.File): Promise<Buffer[]> {
         const parser = new PDFParse({ data: file.buffer });
         try {
-            const result = await parser.getScreenshot({ partial: [1], scale: 2 });
-            const page = result.pages[0];
-            if (!page?.data) {
+            const result = await parser.getScreenshot({
+                first: ExtractionService.MAX_RASTERIZED_PDF_PAGES,
+                scale: 2,
+            });
+            const buffers: Buffer[] = [];
+            for (const page of result.pages) {
+                if (page?.data) {
+                    buffers.push(Buffer.from(page.data));
+                }
+            }
+            if (buffers.length === 0) {
                 throw new Error('PDF rasterization produced no image data');
             }
-            return Buffer.from(page.data);
+            return buffers;
         } finally {
             await parser.destroy();
         }
     }
 
     /**
-     * Sends the sanitised text and/or image buffer to Groq and extracts invoice data
-     * alongside a per-field confidence score (0–1).
+     * Sends the sanitised text and/or image buffers to Groq and extracts invoice data
+     * alongside a per-field confidence score (0–1) and an image-PII flag.
      */
     private async callGroq(
         sanitisedText: string,
         mimeType: string,
-        buffer?: Buffer,
-    ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence }> {
+        buffers?: Buffer[],
+    ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence; imagePiiDetected: boolean }> {
         const messages: any[] = [
             {
                 role: 'user',
@@ -303,7 +324,8 @@ Return ONLY a valid JSON object with exactly this structure — no other text:
     "totalAmount": 0.0,
     "currency": 0.0,
     "lineItems": 0.0
-  }
+  },
+  "imagePiiDetected": false
 }
 
 CONFIDENCE SCORING — use ONLY these six exact values, nothing in between:
@@ -319,7 +341,12 @@ IMPORTANT RULES:
 - You MUST use only: 0.0, 0.2, 0.4, 0.6, 0.8, or 1.0. No other values.
 - If a field is null, its confidence MUST be 0.0.
 - Fields that are commonly absent from invoices (dueDate, taxAmount, customerAddress) should realistically score lower when the document does not make them explicit.
-- Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.`
+- Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.
+
+IMAGE PII CHECK — only relevant when one or more images were provided:
+- Set "imagePiiDetected" to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields above (e.g. in a footer, signature, stamp, or handwritten margin note).
+- A vendor's published business contact info in a normal invoice header does not need to be flagged; use judgement for anything that reads as a private individual's personal detail rather than routine business letterhead.
+- If no image was provided at all, always set this to false.`
                     }
                 ]
             }
@@ -332,7 +359,7 @@ IMPORTANT RULES:
             });
         }
 
-        if (buffer) {
+        for (const buffer of buffers ?? []) {
             messages[0].content.push({
                 type: 'image',
                 image: buffer,
@@ -354,6 +381,9 @@ IMPORTANT RULES:
             return {
                 invoice: parsed.invoice as Invoice,
                 confidence: parsed.confidence as InvoiceConfidence,
+                // Force false when no image was actually sent — never trust the model's
+                // claim about image content it was never given.
+                imagePiiDetected: (buffers?.length ?? 0) > 0 && Boolean(parsed.imagePiiDetected),
             };
         } catch (error) {
             this.logger.error('Failed to parse AI response as JSON:', text);
@@ -362,10 +392,11 @@ IMPORTANT RULES:
     }
 
     async getStats() {
-        const [total, successCount, piiCount, bySourceType, avgTime, recent] = await Promise.all([
+        const [total, successCount, piiCount, imagePiiCount, bySourceType, avgTime, recent] = await Promise.all([
             this.prisma.extractionLog.count(),
             this.prisma.extractionLog.count({ where: { success: true } }),
             this.prisma.extractionLog.count({ where: { piiDetected: true } }),
+            this.prisma.extractionLog.count({ where: { imagePiiDetected: true } }),
             this.prisma.extractionLog.groupBy({
                 by: ['sourceType'],
                 _count: { id: true },
@@ -384,6 +415,7 @@ IMPORTANT RULES:
                     originalFileName: true,
                     fileSizeBytes: true,
                     piiDetected: true,
+                    imagePiiDetected: true,
                     processingTimeMs: true,
                     success: true,
                     errorMessage: true,
@@ -399,6 +431,8 @@ IMPORTANT RULES:
             successRate: total > 0 ? Math.round((successCount / total) * 100) : 0,
             piiDetectedCount: piiCount,
             piiDetectionRate: total > 0 ? Math.round((piiCount / total) * 100) : 0,
+            imagePiiDetectedCount: imagePiiCount,
+            imagePiiDetectionRate: total > 0 ? Math.round((imagePiiCount / total) * 100) : 0,
             avgProcessingTimeMs: Math.round(avgTime._avg.processingTimeMs ?? 0),
             bySourceType: bySourceType.map((row) => ({
                 sourceType: row.sourceType,

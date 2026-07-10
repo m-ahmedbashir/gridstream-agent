@@ -7,6 +7,7 @@ export interface ExtractionResult {
     mimeType: string;
     maskedText: string;
     piiDetected: boolean;
+    imagePiiDetected: boolean;
     extractedInvoice: Invoice;
     confidence: import('@opp/shared').InvoiceConfidence;
     avgConfidence: number;
