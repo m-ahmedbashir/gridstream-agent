@@ -1,0 +1,79 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String   @id @default(cuid())
+  clerkId          String   @unique
+  extractionMode   String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  invoices         Invoice[]
+}
+
+model Invoice {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Invoice fields
+  invoiceNumber    String?
+  issueDate        String?
+  dueDate          String?
+  vendorName       String?
+  vendorAddress    String?
+  customerName     String?
+  customerAddress  String?
+  subtotal         Float?
+  taxAmount        Float?
+  totalAmount      Float?
+  currency         String?
+  lineItems        Json?    // Array of line items
+
+  // AI confidence — stored alongside the extracted data
+  fieldConfidence  Json?    // { invoiceNumber: 0.95, vendorName: 0.88, ... }
+  avgConfidence    Float?
+
+  // Status
+  status           String   @default("APPROVED") // APPROVED | REJECTED | PENDING
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model ExtractionLog {
+  id               String   @id @default(cuid())
+
+  // What came in
+  sourceType       String   // PDF | IMAGE | TEXT | CSV | JSON
+  originalFileName String?
+  fileSizeBytes    Int?
+
+  // What the pipeline measured
+  piiDetected      Boolean  @default(false)
+  imagePiiDetected Boolean  @default(false) // PII visible in image pixels — text masking can't reach this
+  processingTimeMs Int
+
+  // AI confidence for this extraction
+  avgConfidence    Float?
+
+  // Outcome
+  success          Boolean  @default(true)
+  errorMessage     String?
+  invoiceId        String?  // set when the user saves/approves the invoice
+
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sourceType])
+  @@index([success])
+}
