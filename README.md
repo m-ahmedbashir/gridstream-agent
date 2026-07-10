@@ -47,7 +47,8 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - **Real observability.** Every extraction attempt — success *and* failure — writes an `ExtractionLog` row. The `/extraction/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, text-PII rate, image-PII rate, and average latency by source type.
 - **A virtualized, stream-aware chat UI.** The message list renders through `react-virtuoso` instead of one DOM node per message, and autoscroll behaviour adapts to state (`'auto'` while streaming, `'smooth'` on submit, off once the user has scrolled up to read history).
 - **A provider-agnostic model registry.** Extraction no longer hard-codes Groq — a small registry (`model-registry.ts`) maps a key to a provider (Groq, OpenAI, or Anthropic today) and tracks per-model capability, so a text-only model can't silently be sent an image it can't read. Swapping the default model is a one-line config change, not a code change. Verified by actually booting the app and confirming NestJS resolves the new dependency correctly, not just by reading the code.
-- **32 passing unit tests** across the extraction and compliance services, including multi-page rasterization, rasterization-failure, image-PII-flag, and model-registry/vision-guard coverage.
+- **A per-user model preference, actually enforced.** A model picker in Settings (`GET /extraction/models` reads the registry directly, so the UI never hand-duplicates it) saves a `modelKey` per user, same pattern as the existing `extractionMode` setting. Every upload now carries a `userId`; the extraction pipeline looks up that user's saved model before processing. Verified live against the real database, not just mocks — set a real user to a text-only model and confirmed the vision guard rejected an image upload citing that exact model.
+- **41 passing unit tests** across extraction, compliance, and user-settings services, including multi-page rasterization, rasterization-failure, image-PII-flag, model-registry/vision-guard, and per-user model-preference coverage.
 
 
 ### 🔵 Roadmap
@@ -60,7 +61,6 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - **`useObject` on the frontend** to stream extraction progress field-by-field into the review card instead of waiting on one blocking response — meaningfully better perceived latency on larger documents.
 - **Multi-step agentic tool loops** (`stopWhen`/`maxSteps`) in the chat assistant, so it can chain something like "find this invoice → summarize it → propose the delete" as one guided sequence instead of one tool call per turn.
 - **Embeddings (`embed`/`embedMany`)** over stored invoices for genuine semantic search in chat ("show me invoices like this one") rather than exact-field matching.
-- **A model picker in Settings.** Now that the model registry exists (see Features above), letting a user choose provider + model per account is the next step — same pattern as the existing `extractionMode` setting.
 - **BYOK (bring your own key).** A user supplies their own Groq/OpenAI/Anthropic key instead of using the app's shared one. Non-negotiable requirement: keys get encrypted at rest (e.g. AES-GCM with a server-side secret), not stored as plaintext — not worth shipping otherwise.
 - **Local OCR (Tesseract.js) as an alternative extraction path.** More than a nice-to-have: images and rasterized PDF pages currently go to the vision model *unmasked*, because pixels can't be regex-matched (that's what the `imagePiiDetected` warning above is standing in for). OCR converts pixels to text *before anything leaves the server*, which means it can run through the exact same masking pipeline text already does — offered as a "more private, but weaker on messy/handwritten scans" alternative to the vision-model path.
 - **Local model support (Ollama) is a separate question from the above.** The obvious community provider (`ollama-ai-provider-v2`) requires AI SDK v7; this repo is on v6. The v6→v7 migration touches the multimodal image-message format and the tool-approval mechanics behind the `deleteInvoice` HITL flow — real breaking changes, not just a version bump — so this needs its own deliberate migration (with the `@ai-sdk/codemod` tool, then full re-verification of the extraction and approval flows) rather than happening as a side effect of chasing local-model support.
@@ -166,7 +166,7 @@ pnpm dev:backend
 ### Running Tests & Typecheck
 
 ```bash
-pnpm test         # 32 tests, all passing — same command CI runs
+pnpm test         # 41 tests, all passing — same command CI runs
 pnpm run typecheck  # tsc --noEmit across every workspace
 ```
 
