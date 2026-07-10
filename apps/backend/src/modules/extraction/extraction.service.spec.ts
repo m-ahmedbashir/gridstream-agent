@@ -68,6 +68,7 @@ jest.mock('pdf-parse', () => ({
 }));
 
 import { generateText } from 'ai';
+import { createGroq } from '@ai-sdk/groq';
 import { PDFParse } from 'pdf-parse';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -401,6 +402,42 @@ describe('ExtractionService', () => {
                 service.processFile(file, undefined, 'groq:llama-3.3-70b'),
             ).rejects.toThrow("doesn't support image input");
             expect(generateText).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('processFile() — BYOK apiKeyOverride (Phase 3)', () => {
+        it('uses the app default env key when no apiKeyOverride is supplied', async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+            await service.processFile(file);
+
+            const createGroqArgs = (createGroq as jest.Mock).mock.calls.at(-1)![0];
+            expect(createGroqArgs.apiKey).toBe(process.env.GROQ_API_KEY);
+        });
+
+        it("passes the caller's decrypted key straight to the provider SDK instead of the app's shared key", async () => {
+            const file = makeFile('Total: 500 USD', 'text/plain');
+            await service.processFile(file, undefined, undefined, 'sk-users-own-decrypted-key');
+
+            const createGroqArgs = (createGroq as jest.Mock).mock.calls.at(-1)![0];
+            expect(createGroqArgs.apiKey).toBe('sk-users-own-decrypted-key');
+        });
+
+        it('never includes the apiKeyOverride in the thrown error message if the model call fails', async () => {
+            (generateText as jest.Mock).mockRejectedValueOnce(
+                new Error('Request failed for key sk-users-own-decrypted-key: invalid_api_key'),
+            );
+            const file = makeFile('Total: 500 USD', 'text/plain');
+
+            await expect(
+                service.processFile(file, undefined, undefined, 'sk-users-own-decrypted-key'),
+            ).rejects.toThrow(); // still fails — this test only cares that the key never leaks
+
+            // The scrubbed message is what actually gets persisted to ExtractionLog.
+            const logCall = (prisma.extractionLog.create as jest.Mock).mock.calls.find(
+                (call) => call[0].data.success === false,
+            );
+            expect(logCall![0].data.errorMessage).not.toContain('sk-users-own-decrypted-key');
+            expect(logCall![0].data.errorMessage).toContain('[REDACTED:API_KEY]');
         });
     });
 });

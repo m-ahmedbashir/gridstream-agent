@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Loader2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Loader2, KeyRound, CheckCircle2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSettings, type ExtractionMode } from '../hooks/useSettings';
 import { useModelOptions } from '../hooks/useModelOptions';
@@ -28,6 +29,9 @@ export function SettingsForm() {
   const [selectedMode, setSelectedMode] = useState<ExtractionMode>('MANUAL_REVIEW');
   const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [isEditingApiKey, setIsEditingApiKey] = useState(false);
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
 
   useEffect(() => {
     if (settings?.extractionMode) {
@@ -56,6 +60,37 @@ export function SettingsForm() {
       }
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    try {
+      setIsSavingApiKey(true);
+      const success = await updateSettings({ apiKey: apiKeyInput.trim() });
+      if (success) {
+        toast.success('API key saved');
+        setApiKeyInput('');
+        setIsEditingApiKey(false);
+      } else {
+        toast.error('Failed to save API key');
+      }
+    } finally {
+      setIsSavingApiKey(false);
+    }
+  };
+
+  const handleRemoveApiKey = async () => {
+    try {
+      setIsSavingApiKey(true);
+      const success = await updateSettings({ apiKey: '' });
+      if (success) {
+        toast.success('API key removed — extraction will use the shared key again');
+      } else {
+        toast.error('Failed to remove API key');
+      }
+    } finally {
+      setIsSavingApiKey(false);
     }
   };
 
@@ -130,6 +165,62 @@ export function SettingsForm() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className='border-t pt-6 space-y-3'>
+          <div className='flex items-center gap-2'>
+            <KeyRound className='h-4 w-4 text-muted-foreground' />
+            <Label className='text-base font-semibold'>Your Own API Key (optional)</Label>
+          </div>
+          <p className='text-sm text-muted-foreground'>
+            Bring your own provider key instead of using the shared one. It's encrypted before it's stored, and
+            once saved it can't be viewed again here — only replaced or removed.
+          </p>
+
+          {settings?.hasApiKey && !isEditingApiKey ? (
+            <div className='flex items-center justify-between rounded-lg border p-3'>
+              <div className='flex items-center gap-2 text-sm'>
+                <CheckCircle2 className='h-4 w-4 text-green-600' />
+                <span>A key is saved for this account</span>
+              </div>
+              <div className='flex gap-2'>
+                <Button variant='outline' size='sm' onClick={() => setIsEditingApiKey(true)} disabled={isSavingApiKey}>
+                  Replace
+                </Button>
+                <Button variant='outline' size='sm' onClick={handleRemoveApiKey} disabled={isSavingApiKey}>
+                  <Trash2 className='h-3.5 w-3.5' />
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className='flex flex-col sm:flex-row gap-2'>
+              <Input
+                type='password'
+                autoComplete='off'
+                placeholder='sk-...'
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                disabled={isSavingApiKey}
+                className='flex-1'
+              />
+              <Button onClick={handleSaveApiKey} disabled={isSavingApiKey || !apiKeyInput.trim()}>
+                {isSavingApiKey ? <Loader2 className='h-4 w-4 animate-spin' /> : 'Save Key'}
+              </Button>
+              {settings?.hasApiKey && (
+                <Button
+                  variant='ghost'
+                  onClick={() => {
+                    setIsEditingApiKey(false);
+                    setApiKeyInput('');
+                  }}
+                  disabled={isSavingApiKey}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         {error && (
