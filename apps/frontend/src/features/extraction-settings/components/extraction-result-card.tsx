@@ -16,7 +16,7 @@ export interface ExtractionResultData {
     mimeType: string;
     maskedText: string;
     piiDetected: boolean;
-    geminiResponse: Invoice;
+    extractedInvoice: Invoice;
     confidence?: InvoiceConfidence;
     avgConfidence?: number;
     processedAt: string;
@@ -26,10 +26,11 @@ export interface ExtractionResultData {
 function ConfidenceBadge({ score }: { score?: number }) {
   if (score === undefined || score === null) return null;
   const pct = Math.round(score * 100);
+  // Thresholds match the 6 discrete anchor values: 1.0 / 0.8 / 0.6 / 0.4 / 0.2 / 0.0
   const style =
-    pct >= 90
+    score >= 0.8
       ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
-      : pct >= 70
+      : score >= 0.6
       ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-400'
       : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400';
   return (
@@ -43,7 +44,7 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
   const { userId } = useAuth();
   const { mutate: saveInvoice, isPending } = useSaveInvoice();
 
-  const initialInvoiceData = data.result.geminiResponse;
+  const initialInvoiceData = data.result.extractedInvoice;
   const confidence = data.result.confidence;
   const [invoice, setInvoice] = useState<Invoice>(initialInvoiceData);
   const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(null);
@@ -127,9 +128,9 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                  <h3 className="text-lg font-semibold">Extracted Data</h3>
                  {data.result.avgConfidence !== undefined && (
                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                     data.result.avgConfidence >= 0.9
+                     data.result.avgConfidence >= 0.8
                        ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
-                       : data.result.avgConfidence >= 0.7
+                       : data.result.avgConfidence >= 0.6
                        ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-400'
                        : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400'
                    }`}>

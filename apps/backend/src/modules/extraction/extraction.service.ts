@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
 import { createGroq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
+import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { type Invoice, type InvoiceConfidence } from '@opp/shared';
@@ -18,7 +19,7 @@ export interface ExtractionResult {
     file?: ProcessedFile;
     maskedText: string;
     piiDetected: boolean;
-    geminiResponse: Invoice;
+    extractedInvoice: Invoice;
     confidence: InvoiceConfidence;
     avgConfidence: number;
     processedAt: string;
@@ -97,8 +98,15 @@ export class ExtractionService {
             : 'TEXT';
 
         // Step 1 — Extract raw text from the file buffer, append pasted text
-        const extractedFileText = file ? this.extractText(file) : '';
+        const extractedFileText = file ? await this.extractText(file) : '';
         const rawText = [extractedFileText, textPayload].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
+
+        if (file?.mimetype === 'application/pdf' && !rawText.trim()) {
+            throw new HttpException(
+                'This PDF has no extractable text layer (it may be a scanned/image-only document). Try uploading it as an image (PNG/JPEG) instead, or paste the invoice text manually.',
+                HttpStatus.UNPROCESSABLE_ENTITY,
+            );
+        }
 
         // Step 2 — Mask PII before sending to any external service
         const maskedText = rawText ? this.complianceService.mask(rawText) : '';
@@ -112,11 +120,11 @@ export class ExtractionService {
         const bufferToPass = isImage ? file?.buffer : undefined;
         const mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
-        let geminiResponse: Invoice;
+        let extractedInvoice: Invoice;
         let confidence: InvoiceConfidence;
         try {
             const groqResult = await this.callGroq(maskedText, mimeTypeToPass, bufferToPass);
-            geminiResponse = groqResult.invoice;
+            extractedInvoice = groqResult.invoice;
             confidence = groqResult.confidence;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
@@ -169,7 +177,7 @@ export class ExtractionService {
             }),
             maskedText,
             piiDetected,
-            geminiResponse,
+            extractedInvoice,
             confidence,
             avgConfidence,
             processedAt: new Date().toISOString(),
@@ -185,14 +193,28 @@ export class ExtractionService {
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**
-     * Decodes the file buffer to a UTF-8 string.
-     * For binary formats (PDF, images) this returns an empty string to defer to Vision.
+     * Decodes the file buffer to a UTF-8 string for plain-text formats,
+     * pulls the text layer out of a PDF via pdf-parse, or defers to the
+     * vision model for images (returns '' so the raw buffer is sent instead).
      */
-    private extractText(file: Express.Multer.File): string {
+    private async extractText(file: Express.Multer.File): Promise<string> {
         const textMimes = new Set(['text/plain', 'text/csv', 'application/json']);
 
         if (textMimes.has(file.mimetype)) {
             return file.buffer.toString('utf-8');
+        }
+
+        if (file.mimetype === 'application/pdf') {
+            const parser = new PDFParse({ data: file.buffer });
+            try {
+                const result = await parser.getText();
+                return result.text ?? '';
+            } catch (error) {
+                this.logger.error('Failed to parse PDF text layer', error);
+                return '';
+            } finally {
+                await parser.destroy();
+            }
         }
 
         this.logger.debug(
@@ -250,13 +272,20 @@ Return ONLY a valid JSON object with exactly this structure — no other text:
   }
 }
 
-Confidence rules:
-- Use a float between 0.0 and 1.0 for each field.
-- 0.95–1.0 = clearly visible and unambiguous in the document.
-- 0.75–0.94 = found but required inference or partial reading.
-- 0.50–0.74 = uncertain, guessed from context.
-- 0.0–0.49 = not found or highly uncertain.
-- If a field value is null, its confidence must be 0.0.`
+CONFIDENCE SCORING — use ONLY these six exact values, nothing in between:
+
+1.0 — The exact value is explicitly printed/written in the document. You read it directly with no interpretation needed.
+0.8 — The value is present but required minor interpretation: e.g. handwriting, abbreviation, non-standard date format, or reconstructing a total from line items.
+0.6 — The value is partially visible or you inferred it from strong surrounding context (e.g. "Net 30" implies a due date, a logo implies a vendor name).
+0.4 — The value is not clearly stated. You estimated it from weak indirect evidence and another reader might reach a different answer.
+0.2 — You guessed. The document gives almost no reliable signal for this field.
+0.0 — The field value is null (not found), OR you have no defensible basis for the extracted value.
+
+IMPORTANT RULES:
+- You MUST use only: 0.0, 0.2, 0.4, 0.6, 0.8, or 1.0. No other values.
+- If a field is null, its confidence MUST be 0.0.
+- Fields that are commonly absent from invoices (dueDate, taxAmount, customerAddress) should realistically score lower when the document does not make them explicit.
+- Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.`
                     }
                 ]
             }

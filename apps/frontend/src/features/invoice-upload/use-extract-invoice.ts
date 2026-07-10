@@ -7,7 +7,7 @@ export interface ExtractionResult {
     mimeType: string;
     maskedText: string;
     piiDetected: boolean;
-    geminiResponse: Invoice;
+    extractedInvoice: Invoice;
     confidence: import('@opp/shared').InvoiceConfidence;
     avgConfidence: number;
     processedAt: string;
