@@ -5,11 +5,11 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 // Mock the SDK boundary so tests never touch the network. The real service
-// calls `generateText` from `ai`, using a model built by `createGroq` from
+// calls `generateObject` from `ai`, using a model built by `createGroq` from
 // `@ai-sdk/groq` — mock exactly those, not the earlier Gemini-era imports.
 jest.mock('ai', () => ({
-    generateText: jest.fn().mockResolvedValue({
-        text: JSON.stringify({
+    generateObject: jest.fn().mockResolvedValue({
+        object: {
             invoice: {
                 invoiceNumber: 'INV-001',
                 issueDate: '2024-01-01',
@@ -38,7 +38,8 @@ jest.mock('ai', () => ({
                 currency: 1.0,
                 lineItems: 0.4,
             },
-        }),
+            imagePiiDetected: false,
+        },
     }),
 }));
 
@@ -67,7 +68,7 @@ jest.mock('pdf-parse', () => ({
     })),
 }));
 
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { PDFParse } from 'pdf-parse';
 
@@ -165,12 +166,12 @@ describe('ExtractionService', () => {
             expect(result.maskedText).toContain('[REDACTED:EMAIL]');
         });
 
-        it('should call generateText (Groq) exactly once per file', async () => {
+        it('should call generateObject (Groq) exactly once per file', async () => {
             const file = makeFile('Total: 500 USD', 'text/plain');
 
             await service.processFile(file);
 
-            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(generateObject).toHaveBeenCalledTimes(1);
         });
 
         it('should throw UnsupportedMediaTypeException for disallowed MIME types', async () => {
@@ -213,7 +214,7 @@ describe('ExtractionService', () => {
             const result = await service.processFile(file);
 
             expect(result.maskedText).toContain('Invoice total: 2000 EUR');
-            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(generateObject).toHaveBeenCalledTimes(1);
         });
 
         it('should render page 1 to an image and use the vision path when a PDF has no text layer', async () => {
@@ -227,7 +228,7 @@ describe('ExtractionService', () => {
 
             const result = await service.processFile(file);
 
-            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(generateObject).toHaveBeenCalledTimes(1);
             expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
         });
 
@@ -245,7 +246,7 @@ describe('ExtractionService', () => {
             const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'multipage-scanned.pdf');
             await service.processFile(file);
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             const imageBlocks = callArgs.messages[0].content.filter((part: any) => part.type === 'image');
             expect(imageBlocks).toHaveLength(3);
         });
@@ -260,7 +261,7 @@ describe('ExtractionService', () => {
             await expect(service.processFile(file)).rejects.toThrow(
                 'could not be rendered as an image',
             );
-            expect(generateText).not.toHaveBeenCalled();
+            expect(generateObject).not.toHaveBeenCalled();
         });
 
         it('should proceed via the text path if a scanned PDF has pasted text alongside it (no rasterization needed)', async () => {
@@ -272,7 +273,7 @@ describe('ExtractionService', () => {
             const result = await service.processFile(file, 'Invoice total: 750 USD');
 
             expect(result.maskedText).toContain('Invoice total: 750 USD');
-            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(generateObject).toHaveBeenCalledTimes(1);
             expect(PDFParse).toHaveBeenCalledTimes(1); // only the text-layer attempt — no rasterization fallback triggered
         });
     });
@@ -288,12 +289,12 @@ describe('ExtractionService', () => {
         });
 
         it('is true when an image was sent and the model flags visible PII', async () => {
-            (generateText as jest.Mock).mockResolvedValueOnce({
-                text: JSON.stringify({
+            (generateObject as jest.Mock).mockResolvedValueOnce({
+                object: {
                     invoice: { invoiceNumber: 'INV-002' },
                     confidence: {},
                     imagePiiDetected: true,
-                }),
+                },
             });
 
             const result = await service.processFile(makeImageFile());
@@ -301,12 +302,12 @@ describe('ExtractionService', () => {
         });
 
         it('is forced to false even if the model claims it when no image was actually sent', async () => {
-            (generateText as jest.Mock).mockResolvedValueOnce({
-                text: JSON.stringify({
+            (generateObject as jest.Mock).mockResolvedValueOnce({
+                object: {
                     invoice: { invoiceNumber: 'INV-003' },
                     confidence: {},
                     imagePiiDetected: true, // the model shouldn't say this with no image, but never trust it
-                }),
+                },
             });
 
             const file = makeFile('Total: 500 USD', 'text/plain');
@@ -320,7 +321,7 @@ describe('ExtractionService', () => {
             const file = makeFile('Total: 500 USD', 'text/plain');
             await service.processFile(file);
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             expect(callArgs.model).toBe('groq-model:meta-llama/llama-4-scout-17b-16e-instruct');
         });
 
@@ -330,7 +331,7 @@ describe('ExtractionService', () => {
 
             await textOnlyService.processFile(file);
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             expect(callArgs.model).toBe('groq-model:llama-3.3-70b-versatile');
         });
 
@@ -340,7 +341,7 @@ describe('ExtractionService', () => {
 
             await openAiService.processFile(file);
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             expect(callArgs.model).toBe('openai-model:gpt-4o');
         });
 
@@ -351,7 +352,7 @@ describe('ExtractionService', () => {
             await expect(textOnlyService.processFile(file)).rejects.toThrow(
                 "doesn't support image input",
             );
-            expect(generateText).not.toHaveBeenCalled();
+            expect(generateObject).not.toHaveBeenCalled();
         });
 
         it('still allows a text-only model to process a request with no image', async () => {
@@ -359,7 +360,7 @@ describe('ExtractionService', () => {
             const file = makeFile('Total: 500 USD', 'text/plain');
 
             await expect(textOnlyService.processFile(file)).resolves.toBeDefined();
-            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(generateObject).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -382,7 +383,7 @@ describe('ExtractionService', () => {
 
             await service.processFile(file, undefined, 'openai:gpt-4o');
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             expect(callArgs.model).toBe('openai-model:gpt-4o');
         });
 
@@ -391,7 +392,7 @@ describe('ExtractionService', () => {
 
             await service.processFile(file, undefined, 'not-a-real-model');
 
-            const callArgs = (generateText as jest.Mock).mock.calls[0][0];
+            const callArgs = (generateObject as jest.Mock).mock.calls[0][0];
             expect(callArgs.model).toBe('groq-model:meta-llama/llama-4-scout-17b-16e-instruct');
         });
 
@@ -401,7 +402,7 @@ describe('ExtractionService', () => {
             await expect(
                 service.processFile(file, undefined, 'groq:llama-3.3-70b'),
             ).rejects.toThrow("doesn't support image input");
-            expect(generateText).not.toHaveBeenCalled();
+            expect(generateObject).not.toHaveBeenCalled();
         });
     });
 
@@ -423,7 +424,7 @@ describe('ExtractionService', () => {
         });
 
         it('never includes the apiKeyOverride in the thrown error message if the model call fails', async () => {
-            (generateText as jest.Mock).mockRejectedValueOnce(
+            (generateObject as jest.Mock).mockRejectedValueOnce(
                 new Error('Request failed for key sk-users-own-decrypted-key: invalid_api_key'),
             );
             const file = makeFile('Total: 500 USD', 'text/plain');

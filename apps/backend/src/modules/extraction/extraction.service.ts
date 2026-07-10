@@ -1,9 +1,9 @@
 import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { type Invoice, type InvoiceConfidence } from '@opp/shared';
+import { type Invoice, type InvoiceConfidence, ExtractionResponseSchema } from '@opp/shared';
 import {
     DEFAULT_MODEL_KEY,
     DEFAULT_PROCESSING_MODE,
@@ -410,6 +410,11 @@ export class ExtractionService {
      * Sends the sanitised text and/or image buffers to the configured model
      * (resolved via the model registry) and extracts invoice data alongside a
      * per-field confidence score (0–1) and an image-PII flag.
+     *
+     * Uses `generateObject()` so the model's output is validated directly against
+     * `ExtractionResponseSchema` — no manual JSON.parse, no hand-written catch for
+     * malformed responses. Schema validation failures propagate as-is and are caught
+     * by the outer try/catch in `processFile()`.
      */
     private async callModel(
         sanitisedText: string,
@@ -424,42 +429,11 @@ export class ExtractionService {
                 content: [
                     {
                         type: 'text',
-                        text: `You are an invoice processing assistant. Extract the invoice data from the document.
+                        text: `You are an invoice processing assistant. Extract the invoice data from the document and populate every field you can find.
 
-Return ONLY a valid JSON object with exactly this structure — no other text:
-{
-  "invoice": {
-    "invoiceNumber": "string or null",
-    "issueDate": "string or null",
-    "dueDate": "string or null",
-    "vendorName": "string or null",
-    "vendorAddress": "string or null",
-    "customerName": "string or null",
-    "customerAddress": "string or null",
-    "lineItems": [{ "description": "string", "quantity": number, "unitPrice": number, "totalPrice": number }],
-    "subtotal": number or null,
-    "taxAmount": number or null,
-    "totalAmount": number or null,
-    "currency": "string or null"
-  },
-  "confidence": {
-    "invoiceNumber": 0.0,
-    "issueDate": 0.0,
-    "dueDate": 0.0,
-    "vendorName": 0.0,
-    "vendorAddress": 0.0,
-    "customerName": 0.0,
-    "customerAddress": 0.0,
-    "subtotal": 0.0,
-    "taxAmount": 0.0,
-    "totalAmount": 0.0,
-    "currency": 0.0,
-    "lineItems": 0.0
-  },
-  "imagePiiDetected": false
-}
+For any field you cannot locate in the document, set it to null.
 
-CONFIDENCE SCORING — use ONLY these six exact values, nothing in between:
+CONFIDENCE SCORING — use ONLY these six exact values for every confidence field, nothing in between:
 
 1.0 — The exact value is explicitly printed/written in the document. You read it directly with no interpretation needed.
 0.8 — The value is present but required minor interpretation: e.g. handwriting, abbreviation, non-standard date format, or reconstructing a total from line items.
@@ -475,9 +449,9 @@ IMPORTANT RULES:
 - Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.
 
 IMAGE PII CHECK — only relevant when one or more images were provided:
-- Set "imagePiiDetected" to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields above (e.g. in a footer, signature, stamp, or handwritten margin note).
+- Set imagePiiDetected to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields (e.g. in a footer, signature, stamp, or handwritten margin note).
 - A vendor's published business contact info in a normal invoice header does not need to be flagged; use judgement for anything that reads as a private individual's personal detail rather than routine business letterhead.
-- If no image was provided at all, always set this to false.`
+- If no image was provided at all, set imagePiiDetected to false.`
                     }
                 ]
             }
@@ -498,28 +472,19 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             });
         }
 
-        const { text } = await generateText({
+        const { object } = await generateObject({
             model: resolveModel(modelKey, apiKeyOverride),
+            schema: ExtractionResponseSchema,
             messages,
         });
 
-        try {
-            let jsonText = text.trim();
-            if (jsonText.startsWith('```')) {
-                jsonText = jsonText.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '');
-            }
-            const parsed = JSON.parse(jsonText);
-            return {
-                invoice: parsed.invoice as Invoice,
-                confidence: parsed.confidence as InvoiceConfidence,
-                // Force false when no image was actually sent — never trust the model's
-                // claim about image content it was never given.
-                imagePiiDetected: (buffers?.length ?? 0) > 0 && Boolean(parsed.imagePiiDetected),
-            };
-        } catch (error) {
-            this.logger.error('Failed to parse AI response as JSON:', text);
-            throw new HttpException('Failed to parse AI response', HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        return {
+            invoice: object.invoice as Invoice,
+            confidence: object.confidence as InvoiceConfidence,
+            // Force false when no image was actually sent — never trust the model's
+            // claim about image content it was never given.
+            imagePiiDetected: (buffers?.length ?? 0) > 0 && object.imagePiiDetected,
+        };
     }
 
     /** Lists the registry so the frontend's model picker has a single source of truth, not a hand-duplicated copy. */
