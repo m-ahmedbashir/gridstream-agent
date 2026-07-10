@@ -19,7 +19,7 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 
 ### 🟢 Current Features
 
-- **Multimodal extraction.** Text, CSV, JSON, PDF, and images (PNG/JPEG/WebP) are all accepted. Images go straight to Groq's vision-capable model with no local OCR step; PDFs have their text layer pulled out server-side via `pdf-parse` before masking.
+- **Multimodal extraction, including scanned PDFs.** Text, CSV, JSON, PDF, and images (PNG/JPEG/WebP) are all accepted. Images go straight to Groq's vision-capable model with no local OCR step. PDFs try a text-layer extraction first (`pdf-parse`); if a PDF has no real text — a scanned/image-only document — its first page is rendered to a PNG server-side (`pdf-parse`'s bundled `@napi-rs/canvas` rasterizer) and routed through the same vision path as a direct image upload, instead of failing.
 - **PII masking before anything leaves the server.** An ordered regex pipeline (IBAN → card → email → VAT → phone) strips sensitive tokens out of any text content *before* it's sent to the model. Order is deliberate: looser patterns run last so they can't partially consume a more specific match.
 - **Confidence as six fixed anchors, not a fabricated float.** The extraction prompt forces exactly `1.0 / 0.8 / 0.6 / 0.4 / 0.2 / 0.0`, each with a written rubric, so a score means the same thing every time — and the UI's badge colour thresholds map onto those same six values with no room for mismatch.
 - **Two independent HITL mechanisms:**
@@ -29,22 +29,22 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - **Defense-in-depth uploads.** Files are buffered in memory only (never written to disk), and MIME type/size are validated independently at three layers (Multer, the NestJS pipe, and an in-service allowlist) before any processing starts.
 - **Real observability.** Every extraction attempt — success *and* failure — writes an `ExtractionLog` row. The `/extraction/stats` endpoint runs five Prisma aggregate queries concurrently via `Promise.all` and reports success rate, PII-detection rate, and average latency by source type.
 - **A virtualized, stream-aware chat UI.** The message list renders through `react-virtuoso` instead of one DOM node per message, and autoscroll behaviour adapts to state (`'auto'` while streaming, `'smooth'` on submit, off once the user has scrolled up to read history).
-- **22 passing unit tests** across the extraction and compliance services, including dedicated coverage for the PDF-with-text-layer, PDF-with-no-text-layer, and PDF-plus-pasted-text cases.
+- **23 passing unit tests** across the extraction and compliance services, including dedicated coverage for the PDF-with-text-layer, PDF-with-no-text-layer (rasterization fallback), PDF-where-rasterization-also-fails, and PDF-plus-pasted-text cases.
 
 ### 🟠 Known Limitations
 
 Documented here deliberately rather than discovered later — this list is a snapshot from an active codebase, not a finished product:
 
-- **A scanned/image-only PDF (no text layer) is rejected outright**, with a clear `422` asking the user to upload it as an image instead — there's no automatic PDF-to-image fallback yet. See Roadmap.
-- **PII masking doesn't cover image content.** The regex pipeline only runs on text. A printed IBAN or email visible in a scanned invoice photo is sent to Groq unmasked, because pixels can't be regex-matched — masking currently only protects text that's typed or pasted alongside a file.
+- **PII masking doesn't cover image content.** The regex pipeline only runs on text. A printed IBAN or email visible in a scanned invoice photo — or a rasterized PDF page — is sent to Groq unmasked, because pixels can't be regex-matched. Masking currently only protects text that's typed, pasted, or pulled from a PDF's text layer.
 - **The chat's invoice-preview card partly regex-scrapes the assistant's free-text reply** rather than reading fully structured tool output — a pragmatic shortcut that's fragile if the model rephrases itself.
+- **The PDF rasterization fallback only renders page 1.** A multi-page scanned PDF where the invoice data spans page 2+ won't be seen by the model.
 
-*(Previously listed here and since fixed: PDFs silently sending no content to the model; a red test suite with stale `generateObject`/`@ai-sdk/google` mocks and a missing `PrismaService` in the constructor; the `geminiResponse` naming leftover from an earlier Gemini-based implementation.)*
+*(Previously listed here and since fixed: PDFs silently sending no content to the model; scanned PDFs being rejected outright instead of falling back to image rendering; a red test suite with stale `generateObject`/`@ai-sdk/google` mocks and a missing `PrismaService` in the constructor; the `geminiResponse` naming leftover from an earlier Gemini-based implementation.)*
 
 ### 🔵 Roadmap
 
 **Near-term:**
-- A PDF-to-image fallback (render the first page and route it through the existing vision path) for scanned PDFs that currently get rejected with a 422.
+- Extend the rasterization fallback beyond page 1 for multi-page scanned PDFs.
 - Image-level PII handling — likely a vision pre-pass that flags whether sensitive text is visible in the frame, surfaced to the user as a warning rather than silently sent through.
 - Replace the chat's regex-scraped invoice preview with structured tool output.
 
@@ -151,7 +151,7 @@ pnpm dev:backend
 cd apps/backend
 pnpm test
 ```
-22 tests, all passing.
+23 tests, all passing.
 
 ---
 

@@ -47,11 +47,12 @@ jest.mock('@ai-sdk/groq', () => ({
 }));
 
 // pdf-parse is exercised directly by its own describe block below with its
-// own mock; the top-level mock here covers the plain-text/CSV test cases
-// that never touch the PDF branch.
+// own per-test overrides; this default covers the plain-text/CSV test cases
+// that never touch the PDF branch at all.
 jest.mock('pdf-parse', () => ({
     PDFParse: jest.fn().mockImplementation(() => ({
         getText: jest.fn().mockResolvedValue({ text: '' }),
+        getScreenshot: jest.fn().mockResolvedValue({ pages: [{ data: new Uint8Array([1, 2, 3]) }] }),
         destroy: jest.fn().mockResolvedValue(undefined),
     })),
 }));
@@ -87,6 +88,17 @@ function makePrismaMock() {
             create: jest.fn().mockResolvedValue({ id: 'log-1' }),
         },
     } as unknown as PrismaService;
+}
+
+/** One mock PDFParse instance covering whichever method the test needs. */
+function mockPdfParseInstance(opts: { text?: string; screenshotPage?: { data: Uint8Array } | null } = {}) {
+    return {
+        getText: jest.fn().mockResolvedValue({ text: opts.text ?? '' }),
+        getScreenshot: opts.screenshotPage === null
+            ? jest.fn().mockRejectedValue(new Error('rasterization failed'))
+            : jest.fn().mockResolvedValue({ pages: [opts.screenshotPage ?? { data: new Uint8Array([1, 2, 3]) }] }),
+        destroy: jest.fn().mockResolvedValue(undefined),
+    };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -182,10 +194,9 @@ describe('ExtractionService', () => {
 
     describe('processFile() — PDF handling', () => {
         it('should extract the PDF text layer and send it to Groq', async () => {
-            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() => ({
-                getText: jest.fn().mockResolvedValue({ text: 'Invoice total: 2000 EUR' }),
-                destroy: jest.fn().mockResolvedValue(undefined),
-            }));
+            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() =>
+                mockPdfParseInstance({ text: 'Invoice total: 2000 EUR' }),
+            );
             const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'invoice.pdf');
 
             const result = await service.processFile(file);
@@ -194,30 +205,45 @@ describe('ExtractionService', () => {
             expect(generateText).toHaveBeenCalledTimes(1);
         });
 
-        it('should reject a PDF with no extractable text layer instead of silently sending nothing to the model', async () => {
-            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() => ({
-                getText: jest.fn().mockResolvedValue({ text: '   ' }), // scanned/image-only PDF
-                destroy: jest.fn().mockResolvedValue(undefined),
-            }));
+        it('should render page 1 to an image and use the vision path when a PDF has no text layer', async () => {
+            // First construction (extractText → getText) reports no text;
+            // second construction (renderPdfPageToImage → getScreenshot) succeeds.
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '   ' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({ screenshotPage: { data: new Uint8Array([9, 9, 9]) } }));
+
             const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'scanned.pdf');
 
+            const result = await service.processFile(file);
+
+            expect(generateText).toHaveBeenCalledTimes(1);
+            expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
+        });
+
+        it('should throw when a PDF has no text layer and rasterization also fails', async () => {
+            (PDFParse as unknown as jest.Mock)
+                .mockImplementationOnce(() => mockPdfParseInstance({ text: '' }))
+                .mockImplementationOnce(() => mockPdfParseInstance({ screenshotPage: null })); // getScreenshot rejects
+
+            const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'unreadable.pdf');
+
             await expect(service.processFile(file)).rejects.toThrow(
-                'no extractable text layer',
+                'could not be rendered as an image',
             );
             expect(generateText).not.toHaveBeenCalled();
         });
 
-        it('should proceed if a scanned PDF has pasted text alongside it', async () => {
-            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() => ({
-                getText: jest.fn().mockResolvedValue({ text: '' }),
-                destroy: jest.fn().mockResolvedValue(undefined),
-            }));
+        it('should proceed via the text path if a scanned PDF has pasted text alongside it (no rasterization needed)', async () => {
+            (PDFParse as unknown as jest.Mock).mockImplementationOnce(() =>
+                mockPdfParseInstance({ text: '' }),
+            );
             const file = makeFile('%PDF-1.4 fake bytes', 'application/pdf', 'scanned.pdf');
 
             const result = await service.processFile(file, 'Invoice total: 750 USD');
 
             expect(result.maskedText).toContain('Invoice total: 750 USD');
             expect(generateText).toHaveBeenCalledTimes(1);
+            expect(PDFParse).toHaveBeenCalledTimes(1); // only the text-layer attempt — no rasterization fallback triggered
         });
     });
 });
