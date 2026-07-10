@@ -4,7 +4,7 @@
 
 **Why this exists:** `task/` (the older folder in this repo) tracked the HITL + database work, which is done. This folder tracks the *next* initiative, kept separate so the two don't get mixed up.
 
-**Overall Status:** PLANNED — not started
+**Overall Status:** IN PROGRESS — Phase 1 complete
 **Last Updated:** 2026-07-10
 
 ---
@@ -19,7 +19,7 @@ Right now, PII masking only works on text. A regex pipeline strips emails/phones
 
 | Phase | Focus | Status | Files |
 |-------|-------|--------|-------|
-| **Phase 1** | Provider-agnostic model registry | ⏳ PENDING | `roadmap/phase1.md` |
+| **Phase 1** | Provider-agnostic model registry | ✅ COMPLETE | `roadmap/phase1.md` |
 | **Phase 2** | Model picker (Settings UI) | ⏳ PENDING | `roadmap/phase2.md` |
 | **Phase 3** | BYOK (bring your own key) | ⏳ PENDING | `roadmap/phase3.md` |
 | **Phase 4** | Local OCR — closes the image-PII gap | ⏳ PENDING | `roadmap/phase4.md` |

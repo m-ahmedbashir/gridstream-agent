@@ -46,7 +46,8 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - **Defense-in-depth uploads.** Files are buffered in memory only (never written to disk), and MIME type/size are validated independently at three layers (Multer, the NestJS pipe, and an in-service allowlist) before any processing starts.
 - **Real observability.** Every extraction attempt — success *and* failure — writes an `ExtractionLog` row. The `/extraction/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, text-PII rate, image-PII rate, and average latency by source type.
 - **A virtualized, stream-aware chat UI.** The message list renders through `react-virtuoso` instead of one DOM node per message, and autoscroll behaviour adapts to state (`'auto'` while streaming, `'smooth'` on submit, off once the user has scrolled up to read history).
-- **27 passing unit tests** across the extraction and compliance services, including multi-page rasterization, rasterization-failure, and image-PII-flag coverage.
+- **A provider-agnostic model registry.** Extraction no longer hard-codes Groq — a small registry (`model-registry.ts`) maps a key to a provider (Groq, OpenAI, or Anthropic today) and tracks per-model capability, so a text-only model can't silently be sent an image it can't read. Swapping the default model is a one-line config change, not a code change. Verified by actually booting the app and confirming NestJS resolves the new dependency correctly, not just by reading the code.
+- **32 passing unit tests** across the extraction and compliance services, including multi-page rasterization, rasterization-failure, image-PII-flag, and model-registry/vision-guard coverage.
 
 
 ### 🔵 Roadmap
@@ -59,11 +60,11 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - **`useObject` on the frontend** to stream extraction progress field-by-field into the review card instead of waiting on one blocking response — meaningfully better perceived latency on larger documents.
 - **Multi-step agentic tool loops** (`stopWhen`/`maxSteps`) in the chat assistant, so it can chain something like "find this invoice → summarize it → propose the delete" as one guided sequence instead of one tool call per turn.
 - **Embeddings (`embed`/`embedMany`)** over stored invoices for genuine semantic search in chat ("show me invoices like this one") rather than exact-field matching.
-- **A provider-agnostic model registry.** The extraction service is hard-wired to Groq; abstracting model selection behind a small config layer would make it trivial to swap in Anthropic/OpenAI/a local model per environment — the same bring-your-own-model flexibility this agent already benefits from as a *user* of Groq. This is the foundation the next three items build on.
-- **A model picker in Settings.** Once the registry exists, letting a user choose provider + model per account is cheap — same pattern as the existing `extractionMode` setting.
+- **A model picker in Settings.** Now that the model registry exists (see Features above), letting a user choose provider + model per account is the next step — same pattern as the existing `extractionMode` setting.
 - **BYOK (bring your own key).** A user supplies their own Groq/OpenAI/Anthropic key instead of using the app's shared one. Non-negotiable requirement: keys get encrypted at rest (e.g. AES-GCM with a server-side secret), not stored as plaintext — not worth shipping otherwise.
 - **Local OCR (Tesseract.js) as an alternative extraction path.** More than a nice-to-have: images and rasterized PDF pages currently go to the vision model *unmasked*, because pixels can't be regex-matched (that's what the `imagePiiDetected` warning above is standing in for). OCR converts pixels to text *before anything leaves the server*, which means it can run through the exact same masking pipeline text already does — offered as a "more private, but weaker on messy/handwritten scans" alternative to the vision-model path.
 - **Local model support (Ollama) is a separate question from the above.** The obvious community provider (`ollama-ai-provider-v2`) requires AI SDK v7; this repo is on v6. The v6→v7 migration touches the multimodal image-message format and the tool-approval mechanics behind the `deleteInvoice` HITL flow — real breaking changes, not just a version bump — so this needs its own deliberate migration (with the `@ai-sdk/codemod` tool, then full re-verification of the extraction and approval flows) rather than happening as a side effect of chasing local-model support.
+
 
 **Stretch (broader scope):**
 - Queue-based batch processing (BullMQ) for bulk uploads instead of one synchronous request per file.
@@ -103,7 +104,7 @@ opp-agent/
 
 ## 🛠 Tech Stack
 
-- **AI:** Vercel AI SDK 6, Groq (`llama-4-scout-17b-16e-instruct`)
+- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — Groq (`llama-4-scout-17b-16e-instruct`, default), with OpenAI and Anthropic wired in and ready to select
 - **Validation:** Zod, `nestjs-zod`
 - **Document parsing:** `pdf-parse` (PDF text-layer extraction + `@napi-rs/canvas` rasterization fallback)
 - **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`
@@ -165,7 +166,7 @@ pnpm dev:backend
 ### Running Tests & Typecheck
 
 ```bash
-pnpm test         # 27 tests, all passing — same command CI runs
+pnpm test         # 32 tests, all passing — same command CI runs
 pnpm run typecheck  # tsc --noEmit across every workspace
 ```
 
@@ -173,17 +174,23 @@ pnpm run typecheck  # tsc --noEmit across every workspace
 
 ## 🧑‍💻 The Magic Inside the Code
 
-**Extraction — masked text (and/or a raw image) in, a Zod-validated structure out:**
+**Extraction — masked text (and/or a raw image) in, a Zod-validated structure out, resolved through a provider-agnostic registry:**
 
 ```typescript
-import { createGroq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
+import { resolveModel, MODEL_REGISTRY, DEFAULT_MODEL_KEY } from './model-registry';
 
-const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
+// Swapping the model is a config change (a different registry key), not a code change.
+// The registry also tracks vision support per model — sending an image to a
+// text-only model fails loudly before the request is even made.
+const modelDescriptor = MODEL_REGISTRY[modelKey];
+if (imageBuffer && !modelDescriptor.supportsVision) {
+  throw new Error(`${modelDescriptor.modelId} doesn't support image input`);
+}
 
 // PII is masked before this point — maskedText never contains the raw input
 const { text } = await generateText({
-  model: groq('meta-llama/llama-4-scout-17b-16e-instruct'),
+  model: resolveModel(modelKey ?? DEFAULT_MODEL_KEY),
   messages: [{
     role: 'user',
     content: [
