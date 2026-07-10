@@ -1,9 +1,25 @@
 # Unstructured-to-Ops Action Agent
 
-![License](https://img.shields.io/badge/license-ISC-blue.svg)
+[![CI](https://github.com/m-ahmedbashir/opp-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/m-ahmedbashir/opp-agent/actions/workflows/ci.yml)
+[![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D%2018.0.0-brightgreen.svg)
 ![pnpm](https://img.shields.io/badge/pnpm-%3E%3D%2010.0.0-orange.svg)
 ![TypeScript](https://img.shields.io/badge/typescript-latest-blue.svg)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+## Contents
+
+- [Overview](#overview)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Tech Stack](#-tech-stack)
+- [Getting Started](#️-getting-started)
+- [The Magic Inside the Code](#-the-magic-inside-the-code)
+- [Deployment](#-deployment)
+- [Contributing](#-contributing)
+- [Acknowledgments](#-acknowledgments)
+- [License](#-license)
+- [About the Author](#-about-the-author)
 
 ## Overview
 
@@ -11,7 +27,7 @@
 
 Whether the input is a scanned invoice photo, a plain-text export, or a pasted CSV, the agent processes it with **Groq (Llama 4 Scout)** through the **Vercel AI SDK**, validates every field against a **Zod** schema shared across the whole stack, and surfaces a per-field confidence score so a reviewer knows exactly what to double-check instead of re-reading everything blindly.
 
-The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a chat assistant with agentic tool-approval) and a **NestJS** backend (Prisma/PostgreSQL, the extraction pipeline, PII compliance masking).
+The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a chat assistant with agentic tool-approval) and a **NestJS** backend (Prisma/PostgreSQL, the extraction pipeline, PII compliance masking). Every push and PR runs a real CI pipeline (typecheck + test across all workspaces) — the badge above reflects the actual current state of `main`, not an aspiration.
 
 ---
 
@@ -35,6 +51,9 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 
 ### 🔵 Roadmap
 
+**Near-term (good first issue — see [CONTRIBUTING.md](CONTRIBUTING.md) for details):**
+- Fix frontend linting: `next lint` no longer exists as of Next.js 16, and the legacy `.eslintrc.json` also fails under the installed ESLint version (`TypeError: Converting circular structure to JSON` from `next/core-web-vitals`). Needs a real flat-config migration — `pnpm run lint` isn't wired into CI yet because of this.
+
 **Mid-term (more of the Vercel AI SDK, used more deliberately):**
 - **`generateObject`/`streamObject` in place of `generateText` + manual `JSON.parse`.** Right now the model's raw text response is parsed and cast by hand inside a `try`/`catch`; the SDK's schema-driven structured output would let Zod validate the response directly instead of trusting a string.
 - **`useObject` on the frontend** to stream extraction progress field-by-field into the review card instead of waiting on one blocking response — meaningfully better perceived latency on larger documents.
@@ -46,7 +65,6 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 - Queue-based batch processing (BullMQ) for bulk uploads instead of one synchronous request per file.
 - Rate limiting on the API itself (NestJS Throttler), plus explicit retry/backoff around Groq's 429s rather than a single caught exception.
 - OpenTelemetry tracing around the extraction pipeline, so latency and failures are visible per-span, not just per-log-line.
-- CI running the test suite on every push — would have caught the stale mocks above automatically.
 - Fine-grained permissions on top of Clerk auth (PBAC — who can approve vs. who can only view), rather than a single per-user extraction-mode toggle.
 - CSV/export reporting and a webhook emitter for downstream systems, so approved invoices can push out to something other than this app's own database.
 - A Docker/devcontainer setup for one-command onboarding.
@@ -57,6 +75,10 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, a
 
 ```text
 opp-agent/
+├── .github/
+│   ├── workflows/ci.yml        # typecheck + test on every push/PR
+│   ├── ISSUE_TEMPLATE/
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── apps/
 │   ├── frontend/       # Next.js app — dashboard, chat assistant, extraction review UI
 │   └── backend/        # NestJS API
@@ -67,7 +89,10 @@ opp-agent/
 │           └── users/         # Per-user extraction-mode (HITL) settings
 ├── packages/
 │   └── shared/         # @opp/shared — the Zod InvoiceSchema, single source of truth
-└── shared/              # General monorepo configuration
+├── turbo.json           # build/test/typecheck pipeline across all workspaces
+├── LICENSE
+├── CONTRIBUTING.md
+└── CODE_OF_CONDUCT.md
 ```
 
 ---
@@ -76,11 +101,11 @@ opp-agent/
 
 - **AI:** Vercel AI SDK 6, Groq (`llama-4-scout-17b-16e-instruct`)
 - **Validation:** Zod, `nestjs-zod`
-- **Document parsing:** `pdf-parse` (PDF text-layer extraction)
+- **Document parsing:** `pdf-parse` (PDF text-layer extraction + `@napi-rs/canvas` rasterization fallback)
 - **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`
 - **Backend:** NestJS, Prisma, PostgreSQL
 - **Auth:** Clerk
-- **Workspaces/Tooling:** pnpm, Turborepo
+- **Workspaces/Tooling:** pnpm, Turborepo, GitHub Actions
 
 ---
 
@@ -122,6 +147,7 @@ Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PU
 cd apps/backend
 pnpm prisma migrate dev
 ```
+(The Prisma client is also regenerated automatically on every `pnpm install` via a `postinstall` hook — you don't need to run `prisma generate` by hand.)
 
 ### Running Locally
 
@@ -132,13 +158,12 @@ pnpm dev:frontend
 pnpm dev:backend
 ```
 
-### Running Tests
+### Running Tests & Typecheck
 
 ```bash
-cd apps/backend
-pnpm test
+pnpm test         # 27 tests, all passing — same command CI runs
+pnpm run typecheck  # tsc --noEmit across every workspace
 ```
-27 tests, all passing.
 
 ---
 
@@ -189,11 +214,36 @@ async function onApprove(toolCallId: string, invoiceId: string) {
 
 ## 🚀 Deployment
 
-- **Frontend (Vercel):** CI from `main`. Build: `pnpm build --filter=frontend`
+- **Frontend (Vercel):** Build: `pnpm build --filter=frontend`
 - **Backend (Railway):** Build: `pnpm build --filter=backend`
+
+(This is separate from the [CI workflow](.github/workflows/ci.yml) above, which typechecks and tests every push/PR — it doesn't deploy anything.)
 
 ---
 
-## 📞 Support and Contributions
+## 🤝 Contributing
 
-Questions or bugs — open an Issue in the repository.
+Issues and PRs are genuinely welcome, not just a formality. Before opening one:
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) — it covers setup, the pre-PR checklist (`pnpm run typecheck` + `pnpm test`, the same commands CI runs), and a short list of concrete good-first-issues pulled straight from this README's own Roadmap.
+- This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+- Bug reports and feature requests have templates under `.github/ISSUE_TEMPLATE/`; PRs get a checklist template automatically.
+
+## 🙏 Acknowledgments
+
+The frontend started from [next-shadcn-dashboard-starter](https://github.com/Kiranism/next-shadcn-dashboard-starter) by [Kiranism](https://github.com/Kiranism) (dashboard shell, shadcn/ui setup, auth scaffolding) — since substantially extended with the extraction pipeline, chat assistant, and review UI described above.
+
+## 📄 License
+
+[ISC](LICENSE) — see the [LICENSE](LICENSE) file for the full text.
+
+## 👤 About the Author
+
+Built by **Ahmed Bashir** — a full-stack engineer working across TypeScript, React, and Node.js, currently based in Bielefeld, Germany, and studying Intelligent Interactive Systems (AI/NLP focus) at Bielefeld University.
+
+This repo is the most complete example of how I think about shipping AI-agent features: type safety at the boundary, a human in the loop on anything destructive, and a habit of finding and fixing my own gaps — the PDF rasterization fallback, the CI pipeline, and the license/tooling cleanup in this README were all things I audited into existence, not things that were asked for line by line.
+
+- GitHub: [github.com/m-ahmedbashir](https://github.com/m-ahmedbashir)
+- LinkedIn: [linkedin.com/in/ahmed-bashir-2118651aa](https://www.linkedin.com/in/ahmed-bashir-2118651aa/)
+
+Questions, feedback, or a role you think this'd be a good fit for — open an issue, or reach out directly.
