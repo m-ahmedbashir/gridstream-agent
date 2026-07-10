@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 
-type MockUser = { extractionMode?: string; modelKey?: string; encryptedApiKey?: string | null };
+type MockUser = { extractionMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
 
 function makePrismaMock(existingUser: MockUser | null = null) {
     return {
@@ -13,6 +13,7 @@ function makePrismaMock(existingUser: MockUser | null = null) {
                 Promise.resolve({
                     extractionMode: update.extractionMode ?? create.extractionMode,
                     modelKey: update.modelKey ?? create.modelKey,
+                    processingMode: update.processingMode ?? create.processingMode,
                     encryptedApiKey: 'encryptedApiKey' in update ? update.encryptedApiKey : create.encryptedApiKey ?? null,
                     updatedAt: new Date(),
                 }),
@@ -42,7 +43,7 @@ describe('UsersService', () => {
     });
 
     describe('getSettings()', () => {
-        it('returns defaults (MANUAL_REVIEW + groq:llama-4-scout + no key) when the user does not exist yet', async () => {
+        it('returns defaults (MANUAL_REVIEW + groq:llama-4-scout + vision + no key) when the user does not exist yet', async () => {
             const prisma = makePrismaMock(null);
             const service = new UsersService(prisma, encryptionService);
 
@@ -51,12 +52,13 @@ describe('UsersService', () => {
             expect(settings).toEqual({
                 extractionMode: 'MANUAL_REVIEW',
                 modelKey: 'groq:llama-4-scout',
+                processingMode: 'vision',
                 hasApiKey: false,
             });
         });
 
         it('returns the stored values when the user already has settings', async () => {
-            const prisma = makePrismaMock({ extractionMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o' });
+            const prisma = makePrismaMock({ extractionMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             const settings = await service.getSettings('existing-user');
@@ -64,6 +66,7 @@ describe('UsersService', () => {
             expect(settings).toEqual({
                 extractionMode: 'AUTO_APPROVE',
                 modelKey: 'openai:gpt-4o',
+                processingMode: 'vision',
                 hasApiKey: false,
             });
         });
@@ -72,6 +75,7 @@ describe('UsersService', () => {
             const prisma = makePrismaMock({
                 extractionMode: 'MANUAL_REVIEW',
                 modelKey: 'groq:llama-4-scout',
+                processingMode: 'vision',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
             });
             const service = new UsersService(prisma, encryptionService);
@@ -96,13 +100,14 @@ describe('UsersService', () => {
                     create: expect.objectContaining({
                         extractionMode: 'AUTO_APPROVE',
                         modelKey: 'groq:llama-4-scout', // untouched field defaults, doesn't come back as undefined
+                        processingMode: 'vision',
                     }),
                 }),
             );
         });
 
         it('updates only the field actually provided, leaving the others untouched', async () => {
-            const prisma = makePrismaMock({ extractionMode: 'MANUAL_REVIEW', modelKey: 'groq:llama-4-scout' });
+            const prisma = makePrismaMock({ extractionMode: 'MANUAL_REVIEW', modelKey: 'groq:llama-4-scout', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             await service.updateSettings('existing-user', { modelKey: 'anthropic:claude-3-5-sonnet' });
@@ -110,6 +115,7 @@ describe('UsersService', () => {
             const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
             expect(upsertArgs.update).toEqual({ modelKey: 'anthropic:claude-3-5-sonnet' });
             expect(upsertArgs.update.extractionMode).toBeUndefined();
+            expect(upsertArgs.update.processingMode).toBeUndefined();
             expect(upsertArgs.update.encryptedApiKey).toBeUndefined();
         });
 
@@ -147,6 +153,7 @@ describe('UsersService', () => {
                 expect(result).toEqual({
                     extractionMode: 'MANUAL_REVIEW',
                     modelKey: 'groq:llama-4-scout',
+                    processingMode: 'vision',
                     updatedAt: expect.any(Date),
                     hasApiKey: true,
                 });
