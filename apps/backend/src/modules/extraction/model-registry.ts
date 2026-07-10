@@ -59,18 +59,22 @@ export function getModelDescriptor(key: ModelKey): ModelDescriptor {
 
 /**
  * Resolves a registry key to an actual AI SDK LanguageModel instance.
- * Each provider reads its own API key from its own env var, so adding a
- * provider here never touches the other providers' configuration.
+ * Each provider reads its own API key from its own env var by default, so
+ * adding a provider here never touches the other providers' configuration.
+ *
+ * @param apiKeyOverride - A user-supplied (BYOK) key, already decrypted by
+ *   the caller, to use in place of the app's shared env-var key for this one
+ *   call. Never logged, never persisted here — the caller owns that.
  */
-export function resolveModel(key: ModelKey): LanguageModel {
+export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageModel {
     const descriptor = MODEL_REGISTRY[key];
 
     switch (descriptor.provider) {
         case 'groq':
-            return createGroq({ apiKey: process.env.GROQ_API_KEY })(descriptor.modelId);
+            return createGroq({ apiKey: apiKeyOverride ?? process.env.GROQ_API_KEY })(descriptor.modelId);
         case 'openai':
-            return createOpenAI({ apiKey: process.env.OPENAI_API_KEY })(descriptor.modelId);
+            return createOpenAI({ apiKey: apiKeyOverride ?? process.env.OPENAI_API_KEY })(descriptor.modelId);
         case 'anthropic':
-            return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
+            return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
     }
 }
