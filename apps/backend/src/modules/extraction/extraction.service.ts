@@ -36,7 +36,7 @@ export interface ExtractionResult {
  * Orchestrates the full invoice extraction pipeline:
  *   1. Decode the uploaded file buffer into text.
  *   2. Mask PII via ComplianceService before touching any external service.
- *   3. Send the sanitised content to Gemini with a structured extraction prompt.
+ *   3. Send the sanitised content to Groq with a structured extraction prompt.
  *   4. Return a typed ExtractionResult.
  */
 @Injectable()
@@ -101,13 +101,6 @@ export class ExtractionService {
         const extractedFileText = file ? await this.extractText(file) : '';
         const rawText = [extractedFileText, textPayload].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
 
-        if (file?.mimetype === 'application/pdf' && !rawText.trim()) {
-            throw new HttpException(
-                'This PDF has no extractable text layer (it may be a scanned/image-only document). Try uploading it as an image (PNG/JPEG) instead, or paste the invoice text manually.',
-                HttpStatus.UNPROCESSABLE_ENTITY,
-            );
-        }
-
         // Step 2 — Mask PII before sending to any external service
         const maskedText = rawText ? this.complianceService.mask(rawText) : '';
         const piiDetected = maskedText !== rawText;
@@ -117,8 +110,26 @@ export class ExtractionService {
         }
 
         const isImage = file?.mimetype.startsWith('image/');
-        const bufferToPass = isImage ? file?.buffer : undefined;
-        const mimeTypeToPass = file?.mimetype ?? 'text/plain';
+        let bufferToPass = isImage ? file?.buffer : undefined;
+        let mimeTypeToPass = file?.mimetype ?? 'text/plain';
+
+        // A PDF with no usable text (no text layer, and nothing pasted alongside it)
+        // is almost always a scanned/image-only document. Rather than failing, render
+        // its first page to an image and route it through the same vision path used
+        // for direct image uploads.
+        if (file?.mimetype === 'application/pdf' && !rawText.trim()) {
+            try {
+                bufferToPass = await this.renderPdfPageToImage(file);
+                mimeTypeToPass = 'image/png';
+                this.logger.log('PDF has no text layer — rendered page 1 to an image for vision extraction.');
+            } catch (error) {
+                this.logger.error('Failed to rasterize PDF for fallback extraction', error);
+                throw new HttpException(
+                    'This PDF has no extractable text layer and could not be rendered as an image either. Try uploading it as an image (PNG/JPEG) directly, or paste the invoice text manually.',
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                );
+            }
+        }
 
         let extractedInvoice: Invoice;
         let confidence: InvoiceConfidence;
@@ -207,7 +218,10 @@ export class ExtractionService {
         if (file.mimetype === 'application/pdf') {
             const parser = new PDFParse({ data: file.buffer });
             try {
-                const result = await parser.getText();
+                // pdf-parse's default pageJoiner inserts a "-- N of M --" marker between
+                // pages even when a page has no real text — disabling it here so an
+                // empty/scanned PDF actually trims down to an empty string, not boilerplate.
+                const result = await parser.getText({ pageJoiner: '' });
                 return result.text ?? '';
             } catch (error) {
                 this.logger.error('Failed to parse PDF text layer', error);
@@ -221,6 +235,26 @@ export class ExtractionService {
             `Handling binary MIME type (${file.mimetype}). Text extraction skipped or deferred to vision model.`,
         );
         return '';
+    }
+
+    /**
+     * Renders the first page of a PDF to a PNG image via pdf-parse's bundled
+     * rasterizer — used as a fallback for scanned/image-only PDFs that have
+     * no extractable text layer, so they can go through the vision path
+     * instead of failing outright.
+     */
+    private async renderPdfPageToImage(file: Express.Multer.File): Promise<Buffer> {
+        const parser = new PDFParse({ data: file.buffer });
+        try {
+            const result = await parser.getScreenshot({ partial: [1], scale: 2 });
+            const page = result.pages[0];
+            if (!page?.data) {
+                throw new Error('PDF rasterization produced no image data');
+            }
+            return Buffer.from(page.data);
+        } finally {
+            await parser.destroy();
+        }
     }
 
     /**
