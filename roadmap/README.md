@@ -4,7 +4,7 @@
 
 **Why this exists:** `task/` (the older folder in this repo) tracked the HITL + database work, which is done. This folder tracks the *next* initiative, kept separate so the two don't get mixed up.
 
-**Overall Status:** IN PROGRESS — Phases 1–2 complete
+**Overall Status:** IN PROGRESS — Phases 1–3 complete
 **Last Updated:** 2026-07-10
 
 ---
@@ -21,7 +21,7 @@ Right now, PII masking only works on text. A regex pipeline strips emails/phones
 |-------|-------|--------|-------|
 | **Phase 1** | Provider-agnostic model registry | ✅ COMPLETE | `roadmap/phase1.md` |
 | **Phase 2** | Model picker (Settings UI) | ✅ COMPLETE | `roadmap/phase2.md` |
-| **Phase 3** | BYOK (bring your own key) | ⏳ PENDING | `roadmap/phase3.md` |
+| **Phase 3** | BYOK (bring your own key) | ✅ COMPLETE | `roadmap/phase3.md` |
 | **Phase 4** | Local OCR — closes the image-PII gap | ⏳ PENDING | `roadmap/phase4.md` |
 | **Phase 5** | `generateObject`/`streamObject` migration | ⏳ PENDING | `roadmap/phase5.md` |
 | **Phase 6** | Local models (Ollama) — blocked, see notes | 🔒 BLOCKED | `roadmap/phase6.md` |
