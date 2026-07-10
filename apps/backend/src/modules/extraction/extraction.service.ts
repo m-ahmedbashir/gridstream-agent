@@ -85,12 +85,16 @@ export class ExtractionService {
      * @param requestedModelKey - Per-request model override (e.g. the calling
      *   user's saved preference). Falls back to this instance's configured
      *   default when omitted or when it isn't a recognised registry key.
+     * @param apiKeyOverride - The calling user's own provider API key (BYOK),
+     *   already decrypted by the caller. Never logged: this method scrubs it
+     *   out of any downstream error message before it's stored or thrown.
      * @returns A fully structured ExtractionResult.
      */
     async processFile(
         file?: Express.Multer.File,
         textPayload?: string,
         requestedModelKey?: string,
+        apiKeyOverride?: string,
     ): Promise<ExtractionResult> {
         const startTime = Date.now();
 
@@ -168,13 +172,18 @@ export class ExtractionService {
         let confidence: InvoiceConfidence;
         let imagePiiDetected = false;
         try {
-            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey);
+            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey, apiKeyOverride);
             extractedInvoice = modelResult.invoice;
             confidence = modelResult.confidence;
             imagePiiDetected = modelResult.imagePiiDetected;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const rawErrorMessage = error instanceof Error ? error.message : 'Unknown error';
+            // Defense in depth: a provider error should never echo an API key back, but
+            // scrub it out of anything we log or persist in case one ever does.
+            const errorMessage = apiKeyOverride
+                ? rawErrorMessage.split(apiKeyOverride).join('[REDACTED:API_KEY]')
+                : rawErrorMessage;
 
             await this.prisma.extractionLog.create({
                 data: {
@@ -188,7 +197,9 @@ export class ExtractionService {
                 },
             });
 
-            this.logger.error('Failed to extract data via the AI provider', error);
+            // Log the scrubbed message, not the raw error object — an SDK error can carry
+            // request details in properties Logger.error() would otherwise print in full.
+            this.logger.error(`Failed to extract data via the AI provider: ${errorMessage}`);
             if (error instanceof Error && error.message.includes('429')) {
                 throw new HttpException('Rate limit exceeded. Please try again in a moment.', HttpStatus.TOO_MANY_REQUESTS);
             }
@@ -316,6 +327,7 @@ export class ExtractionService {
         mimeType: string,
         buffers: Buffer[] | undefined,
         modelKey: ModelKey,
+        apiKeyOverride?: string,
     ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence; imagePiiDetected: boolean }> {
         const messages: any[] = [
             {
@@ -398,7 +410,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         }
 
         const { text } = await generateText({
-            model: resolveModel(modelKey),
+            model: resolveModel(modelKey, apiKeyOverride),
             messages,
         });
 

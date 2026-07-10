@@ -85,11 +85,17 @@ export class ExtractionController {
             `Received upload request: file=${file?.originalname ?? 'none'} text=${dto.text ? 'provided' : 'none'}`,
         );
 
-        // No userId supplied (anonymous/local-dev caller) just uses ExtractionService's own default.
-        const modelKey = dto.userId
-            ? (await this.usersService.getSettings(dto.userId)).modelKey
-            : undefined;
+        // No userId supplied (anonymous/local-dev caller) just uses ExtractionService's own defaults.
+        // Note: never log `apiKeyOverride` — it's a decrypted plaintext provider key.
+        let modelKey: string | undefined;
+        let apiKeyOverride: string | undefined;
+        if (dto.userId) {
+            [modelKey, apiKeyOverride] = await Promise.all([
+                this.usersService.getSettings(dto.userId).then((s) => s.modelKey),
+                this.usersService.getDecryptedApiKey(dto.userId),
+            ]);
+        }
 
-        return this.extractionService.processFile(file, dto.text, modelKey);
+        return this.extractionService.processFile(file, dto.text, modelKey, apiKeyOverride);
     }
 }
