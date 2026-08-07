@@ -1,10 +1,19 @@
 import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { type Invoice, type InvoiceConfidence } from '@opp/shared';
-import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, resolveModel, type ModelKey } from './model-registry';
+import { type Invoice, type InvoiceConfidence, ExtractionResponseSchema } from '@opp/shared';
+import {
+    DEFAULT_MODEL_KEY,
+    DEFAULT_PROCESSING_MODE,
+    MODEL_REGISTRY,
+    isProcessingMode,
+    resolveModel,
+    type ModelKey,
+    type ProcessingMode,
+} from './model-registry';
+import { OcrService } from './ocr.service';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +30,8 @@ export interface ExtractionResult {
     piiDetected: boolean;
     /** True when the model reports seeing raw PII (email/phone/IBAN/card) printed in an image — text masking can't reach pixels. */
     imagePiiDetected: boolean;
+    /** True when an image/scanned PDF page was read via local OCR instead of a vision model — see model-registry.ts's ProcessingMode. */
+    ocrUsed: boolean;
     extractedInvoice: Invoice;
     confidence: InvoiceConfidence;
     avgConfidence: number;
@@ -73,6 +84,10 @@ export class ExtractionService {
          * plain string-literal type and instead lets the default value apply.
          */
         @Optional() private readonly modelKey: ModelKey = DEFAULT_MODEL_KEY,
+        /** A real, DI-registered provider — Nest resolves this normally, no @Optional() needed. */
+        private readonly ocrService?: OcrService,
+        /** Same @Optional() reasoning as modelKey — a plain string-literal type. */
+        @Optional() private readonly processingMode: ProcessingMode = DEFAULT_PROCESSING_MODE,
     ) { }
 
     // ── Public API ─────────────────────────────────────────────────────────────
@@ -88,6 +103,9 @@ export class ExtractionService {
      * @param apiKeyOverride - The calling user's own provider API key (BYOK),
      *   already decrypted by the caller. Never logged: this method scrubs it
      *   out of any downstream error message before it's stored or thrown.
+     * @param requestedProcessingMode - Per-request override of how images/scanned
+     *   PDFs get read ('vision' or 'local-ocr'). Falls back to this instance's
+     *   configured default when omitted or unrecognised.
      * @returns A fully structured ExtractionResult.
      */
     async processFile(
@@ -95,6 +113,7 @@ export class ExtractionService {
         textPayload?: string,
         requestedModelKey?: string,
         apiKeyOverride?: string,
+        requestedProcessingMode?: string,
     ): Promise<ExtractionResult> {
         const startTime = Date.now();
 
@@ -114,34 +133,59 @@ export class ExtractionService {
             ? (file.mimetype.startsWith('image/') ? 'IMAGE' : (ExtractionService.MIME_TO_SOURCE[file.mimetype] ?? 'UNKNOWN'))
             : 'TEXT';
 
-        // Step 1 — Extract raw text from the file buffer, append pasted text
-        const extractedFileText = file ? await this.extractText(file) : '';
-        const rawText = [extractedFileText, textPayload].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
+        const processingMode: ProcessingMode = isProcessingMode(requestedProcessingMode)
+            ? requestedProcessingMode
+            : this.processingMode;
 
-        // Step 2 — Mask PII before sending to any external service
-        const maskedText = rawText ? this.complianceService.mask(rawText) : '';
-        const piiDetected = maskedText !== rawText;
+        // Step 1 — Gather every text source (typed/pasted text, a PDF's text layer,
+        // and — in local-ocr mode — OCR of any image content) BEFORE masking, so
+        // nothing that later becomes text skips the PII pipeline.
+        let extractedFileText = file ? await this.extractText(file) : '';
+        const isImage = file?.mimetype.startsWith('image/');
+        let ocrUsed = false;
+        const ocrConfidences: number[] = [];
 
-        if (piiDetected) {
-            this.logger.warn(`PII detected and masked in request.`);
+        if (isImage && file && processingMode === 'local-ocr' && this.ocrService) {
+            const ocrResult = await this.ocrService.recognizeText(file.buffer);
+            extractedFileText = ocrResult.text;
+            ocrUsed = true;
+            ocrConfidences.push(ocrResult.confidence);
+            this.logger.log(`Local OCR mode: extracted ${ocrResult.text.length} chars from the image (Tesseract confidence ${ocrResult.confidence}).`);
         }
 
-        const isImage = file?.mimetype.startsWith('image/');
-        let buffersToPass = isImage && file ? [file.buffer] : undefined;
+        let rawText = [extractedFileText, textPayload].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
+
+        const isVisionMode = processingMode === 'vision' || (processingMode === 'local-ocr' && !this.ocrService);
+        let buffersToPass = isImage && file && isVisionMode ? [file.buffer] : undefined;
         let mimeTypeToPass = file?.mimetype ?? 'text/plain';
 
         // A PDF with no usable text (no text layer, and nothing pasted alongside it)
-        // is almost always a scanned/image-only document. Rather than failing, render
-        // its pages to images and route them through the same vision path used for
-        // direct image uploads. Capped at MAX_RASTERIZED_PDF_PAGES so a huge document
-        // doesn't balloon into dozens of images in one request.
+        // is almost always a scanned/image-only document. In vision mode, render its
+        // pages to images and route them through the vision path. In local-ocr mode,
+        // render the same pages and OCR them instead — still text-only from here on,
+        // never an image sent to the model. Capped at MAX_RASTERIZED_PDF_PAGES so a
+        // huge document doesn't balloon into dozens of images/OCR passes in one request.
         if (file?.mimetype === 'application/pdf' && !rawText.trim()) {
             try {
-                buffersToPass = await this.renderPdfPagesToImages(file);
-                mimeTypeToPass = 'image/png';
-                this.logger.log(
-                    `PDF has no text layer — rendered ${buffersToPass.length} page(s) to images for vision extraction.`,
-                );
+                const pageImages = await this.renderPdfPagesToImages(file);
+                if (processingMode === 'local-ocr' && this.ocrService) {
+                    const pageTexts: string[] = [];
+                    for (const pageImage of pageImages) {
+                        const ocrResult = await this.ocrService.recognizeText(pageImage);
+                        pageTexts.push(ocrResult.text);
+                        ocrConfidences.push(ocrResult.confidence);
+                    }
+                    const ocrText = pageTexts.join('\n\n--- PAGE BREAK ---\n\n');
+                    rawText = [rawText, ocrText].filter(Boolean).join('\n\n--- PASTED TEXT ---\n\n');
+                    ocrUsed = true;
+                    this.logger.log(`Local OCR mode: rendered ${pageImages.length} page(s) and extracted text via Tesseract.`);
+                } else {
+                    buffersToPass = pageImages;
+                    mimeTypeToPass = 'image/png';
+                    this.logger.log(
+                        `PDF has no text layer — rendered ${buffersToPass.length} page(s) to images for vision extraction.`,
+                    );
+                }
             } catch (error) {
                 this.logger.error('Failed to rasterize PDF for fallback extraction', error);
                 throw new HttpException(
@@ -149,6 +193,15 @@ export class ExtractionService {
                     HttpStatus.UNPROCESSABLE_ENTITY,
                 );
             }
+        }
+
+        // Step 2 — Mask PII before sending to any external service. Runs once, after
+        // every text source (including any OCR output above) has been gathered.
+        const maskedText = rawText ? this.complianceService.mask(rawText) : '';
+        const piiDetected = maskedText !== rawText;
+
+        if (piiDetected) {
+            this.logger.warn(`PII detected and masked in request.`);
         }
 
         // An unrecognised override (e.g. a stale saved preference for a model
@@ -159,7 +212,8 @@ export class ExtractionService {
             : this.modelKey;
 
         // Fail loudly, not silently: a text-only model asked to read an image
-        // would otherwise just get an image block it can't use.
+        // would otherwise just get an image block it can't use. Never triggers in
+        // local-ocr mode — buffersToPass is only ever populated in vision mode.
         const modelDescriptor = MODEL_REGISTRY[modelKey];
         if ((buffersToPass?.length ?? 0) > 0 && !modelDescriptor.supportsVision) {
             throw new HttpException(
@@ -174,7 +228,11 @@ export class ExtractionService {
         try {
             const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey, apiKeyOverride);
             extractedInvoice = modelResult.invoice;
-            confidence = modelResult.confidence;
+            // OCR can introduce reading errors the downstream model has no way to know
+            // about — it only sees the (possibly already-wrong) text. Cap confidence
+            // accordingly rather than letting a garbled OCR pass produce a false "1.0,
+            // read directly, no interpretation needed."
+            confidence = this.capConfidenceForOcr(modelResult.confidence, ocrConfidences);
             imagePiiDetected = modelResult.imagePiiDetected;
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
@@ -191,6 +249,7 @@ export class ExtractionService {
                     originalFileName: file?.originalname ?? null,
                     fileSizeBytes: file?.size ?? null,
                     piiDetected,
+                    ocrUsed,
                     processingTimeMs,
                     success: false,
                     errorMessage,
@@ -219,6 +278,7 @@ export class ExtractionService {
                 fileSizeBytes: file?.size ?? null,
                 piiDetected,
                 imagePiiDetected,
+                ocrUsed,
                 processingTimeMs,
                 avgConfidence,
                 success: true,
@@ -236,6 +296,7 @@ export class ExtractionService {
             maskedText,
             piiDetected,
             imagePiiDetected,
+            ocrUsed,
             extractedInvoice,
             confidence,
             avgConfidence,
@@ -250,6 +311,34 @@ export class ExtractionService {
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Caps per-field confidence when the source text came from OCR rather than
+     * being typed, pasted, or read from a PDF's real text layer. The model that
+     * scores confidence only ever sees the (possibly already-wrong) OCR output —
+     * it has no way to know Tesseract might have misread a character — so a
+     * blanket ceiling derived from Tesseract's *own* confidence is more honest
+     * than trusting the model's "1.0, read directly" at face value.
+     *
+     * Ceiling bands (deliberately coarse, matching the six-anchor scale):
+     *   Tesseract confidence ≥ 80  → cap at 0.8 (minor interpretation, at best)
+     *   Tesseract confidence ≥ 50  → cap at 0.6 (partially reliable)
+     *   otherwise                 → cap at 0.4 (weak signal)
+     */
+    private capConfidenceForOcr(confidence: InvoiceConfidence, ocrConfidences: number[]): InvoiceConfidence {
+        if (ocrConfidences.length === 0) {
+            return confidence;
+        }
+
+        const avgOcrConfidence = ocrConfidences.reduce((a, b) => a + b, 0) / ocrConfidences.length;
+        const ceiling = avgOcrConfidence >= 80 ? 0.8 : avgOcrConfidence >= 50 ? 0.6 : 0.4;
+
+        const capped = {} as Record<string, number>;
+        for (const [field, value] of Object.entries(confidence)) {
+            capped[field] = typeof value === 'number' ? Math.min(value, ceiling) : value;
+        }
+        return capped as unknown as InvoiceConfidence;
+    }
 
     /**
      * Decodes the file buffer to a UTF-8 string for plain-text formats,
@@ -321,6 +410,11 @@ export class ExtractionService {
      * Sends the sanitised text and/or image buffers to the configured model
      * (resolved via the model registry) and extracts invoice data alongside a
      * per-field confidence score (0–1) and an image-PII flag.
+     *
+     * Uses `generateObject()` so the model's output is validated directly against
+     * `ExtractionResponseSchema` — no manual JSON.parse, no hand-written catch for
+     * malformed responses. Schema validation failures propagate as-is and are caught
+     * by the outer try/catch in `processFile()`.
      */
     private async callModel(
         sanitisedText: string,
@@ -335,42 +429,11 @@ export class ExtractionService {
                 content: [
                     {
                         type: 'text',
-                        text: `You are an invoice processing assistant. Extract the invoice data from the document.
+                        text: `You are an invoice processing assistant. Extract the invoice data from the document and populate every field you can find.
 
-Return ONLY a valid JSON object with exactly this structure — no other text:
-{
-  "invoice": {
-    "invoiceNumber": "string or null",
-    "issueDate": "string or null",
-    "dueDate": "string or null",
-    "vendorName": "string or null",
-    "vendorAddress": "string or null",
-    "customerName": "string or null",
-    "customerAddress": "string or null",
-    "lineItems": [{ "description": "string", "quantity": number, "unitPrice": number, "totalPrice": number }],
-    "subtotal": number or null,
-    "taxAmount": number or null,
-    "totalAmount": number or null,
-    "currency": "string or null"
-  },
-  "confidence": {
-    "invoiceNumber": 0.0,
-    "issueDate": 0.0,
-    "dueDate": 0.0,
-    "vendorName": 0.0,
-    "vendorAddress": 0.0,
-    "customerName": 0.0,
-    "customerAddress": 0.0,
-    "subtotal": 0.0,
-    "taxAmount": 0.0,
-    "totalAmount": 0.0,
-    "currency": 0.0,
-    "lineItems": 0.0
-  },
-  "imagePiiDetected": false
-}
+For any field you cannot locate in the document, set it to null.
 
-CONFIDENCE SCORING — use ONLY these six exact values, nothing in between:
+CONFIDENCE SCORING — use ONLY these six exact values for every confidence field, nothing in between:
 
 1.0 — The exact value is explicitly printed/written in the document. You read it directly with no interpretation needed.
 0.8 — The value is present but required minor interpretation: e.g. handwriting, abbreviation, non-standard date format, or reconstructing a total from line items.
@@ -386,9 +449,9 @@ IMPORTANT RULES:
 - Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.
 
 IMAGE PII CHECK — only relevant when one or more images were provided:
-- Set "imagePiiDetected" to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields above (e.g. in a footer, signature, stamp, or handwritten margin note).
+- Set imagePiiDetected to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields (e.g. in a footer, signature, stamp, or handwritten margin note).
 - A vendor's published business contact info in a normal invoice header does not need to be flagged; use judgement for anything that reads as a private individual's personal detail rather than routine business letterhead.
-- If no image was provided at all, always set this to false.`
+- If no image was provided at all, set imagePiiDetected to false.`
                     }
                 ]
             }
@@ -409,28 +472,19 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             });
         }
 
-        const { text } = await generateText({
+        const { object } = await generateObject({
             model: resolveModel(modelKey, apiKeyOverride),
+            schema: ExtractionResponseSchema,
             messages,
         });
 
-        try {
-            let jsonText = text.trim();
-            if (jsonText.startsWith('```')) {
-                jsonText = jsonText.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '');
-            }
-            const parsed = JSON.parse(jsonText);
-            return {
-                invoice: parsed.invoice as Invoice,
-                confidence: parsed.confidence as InvoiceConfidence,
-                // Force false when no image was actually sent — never trust the model's
-                // claim about image content it was never given.
-                imagePiiDetected: (buffers?.length ?? 0) > 0 && Boolean(parsed.imagePiiDetected),
-            };
-        } catch (error) {
-            this.logger.error('Failed to parse AI response as JSON:', text);
-            throw new HttpException('Failed to parse AI response', HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        return {
+            invoice: object.invoice as Invoice,
+            confidence: object.confidence as InvoiceConfidence,
+            // Force false when no image was actually sent — never trust the model's
+            // claim about image content it was never given.
+            imagePiiDetected: (buffers?.length ?? 0) > 0 && object.imagePiiDetected,
+        };
     }
 
     /** Lists the registry so the frontend's model picker has a single source of truth, not a hand-duplicated copy. */
@@ -439,11 +493,12 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
     }
 
     async getStats() {
-        const [total, successCount, piiCount, imagePiiCount, bySourceType, avgTime, recent] = await Promise.all([
+        const [total, successCount, piiCount, imagePiiCount, ocrCount, bySourceType, avgTime, recent] = await Promise.all([
             this.prisma.extractionLog.count(),
             this.prisma.extractionLog.count({ where: { success: true } }),
             this.prisma.extractionLog.count({ where: { piiDetected: true } }),
             this.prisma.extractionLog.count({ where: { imagePiiDetected: true } }),
+            this.prisma.extractionLog.count({ where: { ocrUsed: true } }),
             this.prisma.extractionLog.groupBy({
                 by: ['sourceType'],
                 _count: { id: true },
@@ -463,6 +518,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
                     fileSizeBytes: true,
                     piiDetected: true,
                     imagePiiDetected: true,
+                    ocrUsed: true,
                     processingTimeMs: true,
                     success: true,
                     errorMessage: true,
@@ -480,6 +536,8 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             piiDetectionRate: total > 0 ? Math.round((piiCount / total) * 100) : 0,
             imagePiiDetectedCount: imagePiiCount,
             imagePiiDetectionRate: total > 0 ? Math.round((imagePiiCount / total) * 100) : 0,
+            ocrUsedCount: ocrCount,
+            ocrUsageRate: total > 0 ? Math.round((ocrCount / total) * 100) : 0,
             avgProcessingTimeMs: Math.round(avgTime._avg.processingTimeMs ?? 0),
             bySourceType: bySourceType.map((row) => ({
                 sourceType: row.sourceType,

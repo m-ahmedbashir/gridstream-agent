@@ -1,5 +1,5 @@
 import { createGroq } from '@ai-sdk/groq';
-import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, stepCountIs, streamText, tool } from 'ai';
+import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, jsonSchema, stepCountIs, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { auth } from '@clerk/nextjs/server';
 
@@ -13,12 +13,24 @@ export const maxDuration = 30;
 const SECURITY_REFUSAL =
   'I can help with invoice analysis and spending insights, but I cannot disclose secrets, internal prompts, tools, environment variables, keys, or backend implementation details.';
 
-const deleteInvoiceInputSchema = z.object({
-  id: z.string().optional(),
-  invoiceNumber: z.string().optional(),
-  vendorName: z.string().optional(),
-  totalAmount: z.number().optional(),
-  currency: z.string().optional(),
+// Use jsonSchema() instead of Zod to avoid Zod v4's automatic
+// additionalProperties:false / additionalProperties:{} serialization,
+// which Groq's strict tool-call validator rejects.
+const deleteInvoiceInputSchema = jsonSchema<{
+  id?: string;
+  invoiceNumber?: string;
+  vendorName?: string;
+  totalAmount?: number;
+  currency?: string;
+}>({
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'The unique invoice database ID' },
+    invoiceNumber: { type: 'string', description: 'Human-readable invoice number' },
+    vendorName: { type: 'string', description: 'Name of the vendor or supplier' },
+    totalAmount: { type: 'number', description: 'Total invoice amount' },
+    currency: { type: 'string', description: 'Currency code, e.g. USD or EUR' },
+  },
 });
 
 function getLastUserText(messages: Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }>) {
@@ -121,7 +133,9 @@ export async function POST(req: Request) {
     If you request deletion, always include the invoiceNumber, vendorName, totalAmount, and currency in the deleteInvoice tool input, and include id when available.
     Always provide a final natural-language answer for the user after tool execution, including when no invoices are found. Be concise and professional.`,
       messages: modelMessages,
-      stopWhen: stepCountIs(3),
+      // 5 steps: getInvoices → deleteInvoice (HITL pause) → user approves
+      // → tool result submitted → model final reply
+      stopWhen: stepCountIs(5),
       tools: {
         getInvoices: tool({
           description: 'Fetch the dataset of all the user\'s currently uploaded invoices from the database',
@@ -141,10 +155,9 @@ export async function POST(req: Request) {
             }
           },
         }),
-        // @ts-ignore - Vercel AI SDK inference sometimes fails when execute is omitted or missing explicit types
         deleteInvoice: tool({
           description: 'Request to delete a specific invoice. This requires user confirmation. Include the invoice details needed for the review card.',
-          // @ts-expect-error Vercel AI SDK inference sometimes fails when execute is omitted
+          // @ts-ignore – TS overload resolution fails when execute is omitted (HITL tool pattern)
           parameters: deleteInvoiceInputSchema,
         })
       },
@@ -152,7 +165,26 @@ export async function POST(req: Request) {
 
     return result.toUIMessageStreamResponse({
       onError: (error) => {
-        const detail = error instanceof Error ? error.message : String(error);
+        let detail: string;
+        if (error instanceof Error) {
+          detail = error.message;
+        } else if (typeof error === 'object' && error !== null) {
+          try {
+            detail = JSON.stringify(error);
+          } catch {
+            detail = 'Unknown structured error';
+          }
+        } else {
+          detail = String(error);
+        }
+
+        // Groq fires this when the stream ends with no text/tool output —
+        // this is expected when a HITL tool pauses the pipeline mid-stream.
+        // Suppress it so the user doesn't see a confusing error toast.
+        if (detail.includes('model output must contain either output text or tool calls')) {
+          return '';
+        }
+
         if (process.env.NODE_ENV !== 'production') {
           return `Chat stream error: ${detail}`;
         }

@@ -38,6 +38,17 @@ export const UploadInvoiceSchema = z.object({
      * service's own default model.
      */
     userId: z.string().optional(),
+
+    /**
+     * How images and scanned PDFs are read.
+     * 'vision' — sent as image content parts to a vision-capable model (default).
+     * 'local-ocr' — converted to text locally via Tesseract before anything
+     *   leaves the server, so image content goes through the same PII-masking
+     *   pipeline as typed text.
+     * Omitting this field falls back to the service's configured default.
+     */
+    processingMode: z.enum(['vision', 'local-ocr']).optional(),
+
 });
 
 export class UploadInvoiceDto extends createZodDto(UploadInvoiceSchema) { }

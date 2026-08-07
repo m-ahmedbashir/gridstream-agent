@@ -38,6 +38,14 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
+    title: 'Settings',
+    url: '/dashboard/extraction-settings',
+    icon: 'settings',
+    shortcut: ['s', 's'],
+    isActive: false,
+    items: []
+  },
+  {
     title: 'Account',
     url: '#',
     icon: 'account',

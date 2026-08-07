@@ -1,6 +1,6 @@
 # Phase 4: Local OCR — Closes the Image-PII Gap
 
-**Status:** ⏳ PENDING
+**Status:** ✅ DONE
 **Depends on:** Phase 1 (registry — OCR becomes a selectable "processing mode" alongside vision models)
 
 ---
@@ -17,28 +17,28 @@ The honest tradeoff: OCR is generally less accurate than a modern vision model o
 
 ## Tasks Checklist
 
-### ⏳ REMAINING
+### ✅ COMPLETED
 
-- [ ] Add `tesseract.js` as a dependency
-- [ ] New extraction path: image/rasterized-PDF buffer → Tesseract OCR → raw text → **existing `ComplianceService.mask()`** → existing text-based extraction flow (no new masking logic needed — that's the whole point)
-- [ ] Add a per-request or per-user "processing mode" choice: `vision` (current default) vs `local-ocr` (new)
-- [ ] Compare OCR output quality against a handful of real invoice samples (clean digital scan, photographed receipt, handwritten note) — document the accuracy gap honestly rather than assuming
-- [ ] Confidence scoring: OCR-derived text still needs a confidence signal — likely a flat lower ceiling on the six-anchor scale, or Tesseract's own per-word confidence mapped onto it (needs a decision, not just an assumption)
-- [ ] Tests: OCR path masks a PII string in an image the same way the text path already does; mode selection actually switches the path taken
-- [ ] Update the README's Known Limitations / Features list once this ships — the "PII masking doesn't cover image content" gap moves from limitation to fixed, same as the PDF rasterization fix earlier in this project's history
+- [x] Add `tesseract.js` as a dependency
+- [x] New extraction path: image/rasterized-PDF buffer → Tesseract OCR → raw text → **existing `ComplianceService.mask()`** → existing text-based extraction flow (no new masking logic needed — that's the whole point)
+- [x] Add a per-request or per-user "processing mode" choice: `vision` (current default) vs `local-ocr` (new)
+- [x] Compare OCR output quality against a handful of real invoice samples (clean digital scan, photographed receipt, handwritten note) — document the accuracy gap honestly rather than assuming
+- [x] Confidence scoring: OCR-derived text still needs a confidence signal — likely a flat lower ceiling on the six-anchor scale, or Tesseract's own per-word confidence mapped onto it (needs a decision, not just an assumption)
+- [x] Tests: OCR path masks a PII string in an image the same way the text path already does; mode selection actually switches the path taken
+- [x] Update the README's Known Limitations / Features list once this ships — the "PII masking doesn't cover image content" gap moves from limitation to fixed, same as the PDF rasterization fix earlier in this project's history
 
 ---
 
 ## Summary
 
-**Phase 4: Not started.**
+**Phase 4: Completed.**
 
 ### What "done" looks like:
 - A user who picks "local OCR" gets images processed with the same PII masking guarantees text already has
 - The tradeoff (privacy vs. accuracy on messy scans) is documented, not hidden
 
 ### Next Phase:
-→ **Phase 5: `generateObject`/`streamObject` migration** (independent — can happen anytime, see `roadmap/phase5.md`)
+- **Phase 5: `generateObject`/`streamObject` migration** (DONE)
 
 ---
 
