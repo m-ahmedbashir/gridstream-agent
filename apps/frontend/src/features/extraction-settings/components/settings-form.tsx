@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Loader2, KeyRound, CheckCircle2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useSettings, type ExtractionMode } from '../hooks/useSettings';
+import { useSettings, type ExtractionMode, type ProcessingMode } from '../hooks/useSettings';
 import { useModelOptions } from '../hooks/useModelOptions';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -28,6 +28,7 @@ export function SettingsForm() {
   const { models, loading: modelsLoading } = useModelOptions();
   const [selectedMode, setSelectedMode] = useState<ExtractionMode>('MANUAL_REVIEW');
   const [selectedModelKey, setSelectedModelKey] = useState<string>('');
+  const [selectedProcessingMode, setSelectedProcessingMode] = useState<ProcessingMode>('vision');
   const [isSaving, setIsSaving] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [isEditingApiKey, setIsEditingApiKey] = useState(false);
@@ -40,11 +41,16 @@ export function SettingsForm() {
     if (settings?.modelKey) {
       setSelectedModelKey(settings.modelKey);
     }
+    if (settings?.processingMode) {
+      setSelectedProcessingMode(settings.processingMode);
+    }
   }, [settings]);
 
   const hasUnsavedChanges =
     !!settings &&
-    (selectedMode !== settings.extractionMode || selectedModelKey !== settings.modelKey);
+    (selectedMode !== settings.extractionMode ||
+      selectedModelKey !== settings.modelKey ||
+      selectedProcessingMode !== settings.processingMode);
 
   const handleSave = async () => {
     try {
@@ -52,6 +58,7 @@ export function SettingsForm() {
       const success = await updateSettings({
         extractionMode: selectedMode,
         modelKey: selectedModelKey,
+        processingMode: selectedProcessingMode,
       });
       if (success) {
         toast.success('Settings updated');
@@ -167,6 +174,27 @@ export function SettingsForm() {
           </Select>
         </div>
 
+        <div className='border-t pt-6 space-y-2'>
+          <Label htmlFor='processing-mode-picker' className='text-base font-semibold'>
+            Processing Mode
+          </Label>
+          <p className='text-sm text-muted-foreground'>
+            How images and scanned PDFs are read. Vision uses multimodal models (highly accurate). Local OCR runs Tesseract on the server for enhanced privacy (enables PII masking on image text).
+          </p>
+          <Select
+            value={selectedProcessingMode}
+            onValueChange={(value) => setSelectedProcessingMode(value as ProcessingMode)}
+          >
+            <SelectTrigger id='processing-mode-picker' className='w-full sm:w-[320px]'>
+              <SelectValue placeholder='Select processing mode...' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='vision'>Vision (Multimodal Model)</SelectItem>
+              <SelectItem value='local-ocr'>Local OCR (Tesseract)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className='border-t pt-6 space-y-3'>
           <div className='flex items-center gap-2'>
             <KeyRound className='h-4 w-4 text-muted-foreground' />
@@ -244,7 +272,7 @@ export function SettingsForm() {
 
         {settings && !hasUnsavedChanges && (
           <p className='text-xs text-muted-foreground text-center'>
-            Current: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · {settings.modelKey}
+            Current: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · {settings.modelKey} · Mode: {settings.processingMode}
           </p>
         )}
       </CardContent>
