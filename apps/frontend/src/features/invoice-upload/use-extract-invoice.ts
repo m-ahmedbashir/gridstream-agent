@@ -1,7 +1,13 @@
 import { useMutation } from '@tanstack/react-query';
 import { useAuth } from '@clerk/nextjs';
 import { toast } from 'sonner';
-import type { Invoice } from '@opp/shared';
+import type { Invoice, InvoiceConfidence, Receipt, ReceiptConfidence, Resume, ResumeConfidence } from '@opp/shared';
+
+/** Mirrors DocumentTypeKey in the backend's document-type-registry.ts. */
+export type DocumentType = 'invoice' | 'receipt' | 'resume';
+
+export type ExtractedData = Invoice | Receipt | Resume;
+export type ExtractedConfidence = InvoiceConfidence | ReceiptConfidence | ResumeConfidence;
 
 export interface ExtractionResult {
     originalFileName: string;
@@ -9,8 +15,10 @@ export interface ExtractionResult {
     maskedText: string;
     piiDetected: boolean;
     imagePiiDetected: boolean;
-    extractedInvoice: Invoice;
-    confidence: import('@opp/shared').InvoiceConfidence;
+    /** Which document-type registry entry was used — the caller's override or the auto-classified type. */
+    documentType: DocumentType;
+    extractedData: ExtractedData;
+    confidence: ExtractedConfidence;
     avgConfidence: number;
     processedAt: string;
     processingTimeMs: number;

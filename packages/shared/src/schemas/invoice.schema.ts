@@ -51,21 +51,3 @@ export const InvoiceConfidenceSchema = z.object({
 
 export type InvoiceConfidence = z.infer<typeof InvoiceConfidenceSchema>;
 
-/**
- * Combined response schema passed to `generateObject()`.
- * Wraps the invoice extraction result, per-field confidence scores, and the
- * image-PII flag into a single validated object — no manual JSON.parse needed.
- */
-export const ExtractionResponseSchema = z.object({
-    invoice: InvoiceSchema,
-    confidence: InvoiceConfidenceSchema,
-    /**
-     * Set to true if the image(s) visibly show personal PII (email, phone, IBAN,
-     * card number) anywhere in the frame — including outside structured invoice fields.
-     * Always false when no image was sent.
-     */
-    imagePiiDetected: z.boolean().describe('True if personal PII is visibly present in any provided image'),
-});
-
-export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>;
-
