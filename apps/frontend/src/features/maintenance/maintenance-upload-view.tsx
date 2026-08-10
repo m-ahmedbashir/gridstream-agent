@@ -59,9 +59,17 @@ function MachineProfileCard({ profile, machineProfileId }: { profile: MachinePro
                         ))}
                     </div>
                 </div>
-                <Button onClick={() => router.push(`/dashboard/maintenance/measures?machineProfileId=${machineProfileId}`)}>
-                    Find Measures
-                </Button>
+                <div className='flex gap-2'>
+                    <Button onClick={() => router.push(`/dashboard/maintenance/measures?machineProfileId=${machineProfileId}`)}>
+                        Find Measures
+                    </Button>
+                    <Button
+                        variant='outline'
+                        onClick={() => router.push(`/dashboard/maintenance/live?machineProfileId=${machineProfileId}`)}
+                    >
+                        Live Monitoring
+                    </Button>
+                </div>
             </CardContent>
         </Card>
     );
