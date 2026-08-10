@@ -26,14 +26,14 @@ export interface ModelDescriptor {
  * ExtractionService — that's the entire point of this file.
  */
 export const MODEL_REGISTRY = {
-    'groq:llama-4-scout': {
+    'groq:qwen3.6-27b': {
         provider: 'groq',
-        modelId: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        modelId: 'qwen/qwen3.6-27b',
         supportsVision: true,
     },
-    'groq:llama-3.3-70b': {
+    'groq:gpt-oss-120b': {
         provider: 'groq',
-        modelId: 'llama-3.3-70b-versatile',
+        modelId: 'openai/gpt-oss-120b',
         supportsVision: false,
     },
     'openai:gpt-4o': {
@@ -50,8 +50,8 @@ export const MODEL_REGISTRY = {
 
 export type ModelKey = keyof typeof MODEL_REGISTRY;
 
-/** The model used when nothing else is configured — today's behavior, unchanged. */
-export const DEFAULT_MODEL_KEY: ModelKey = 'groq:llama-4-scout';
+/** The model used when nothing else is configured — vision-capable and available on Groq's free tier. */
+export const DEFAULT_MODEL_KEY: ModelKey = 'groq:qwen3.6-27b';
 
 export function getModelDescriptor(key: ModelKey): ModelDescriptor {
     return MODEL_REGISTRY[key];
@@ -88,7 +88,7 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
  *  - 'local-ocr': read locally via Tesseract before anything leaves the
  *    server, so the resulting text goes through the same PII-masking
  *    pipeline that already protects typed/pasted text. More private, weaker
- *    on messy scans — see OcrService and roadmap/phase4.md.
+ *    on messy scans — see OcrService.
  */
 export type ProcessingMode = 'vision' | 'local-ocr';
 
