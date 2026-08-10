@@ -1,17 +1,17 @@
 import { SettingsForm } from '@/features/extraction-settings/components/settings-form';
 
 export const metadata = {
-  title: 'Extraction Settings | maintain-agent',
-  description: 'Configure how documents are extracted and how plans are approved'
+  title: 'Settings | maintain-agent',
+  description: 'Configure plan approval, AI model, and processing mode preferences'
 };
 
-export default function ExtractionSettingsPage() {
+export default function SettingsPage() {
   return (
     <div className='space-y-6'>
       <div>
-        <h1 className='text-3xl font-bold tracking-tight'>Extraction Settings</h1>
+        <h1 className='text-3xl font-bold tracking-tight'>Settings</h1>
         <p className='text-muted-foreground mt-2'>
-          Choose your preferred workflow for processing invoices and maintenance plans
+          Choose your preferred workflow for maintenance plan generation and AI processing
         </p>
       </div>
 

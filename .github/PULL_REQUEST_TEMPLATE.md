@@ -12,4 +12,4 @@
 - [ ] `pnpm test` passes locally
 - [ ] Added/updated tests for any behavior change
 - [ ] Updated the README (Current Features / Known Limitations / Roadmap) if this changes what's true about the project
-- [ ] No secrets, API keys, or real invoice data included in the diff or test fixtures
+- [ ] No secrets, API keys, or real maintenance report data included in the diff or test fixtures

@@ -22,14 +22,6 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
-    title: 'Upload Invoices',
-    url: '/dashboard/upload',
-    icon: 'upload',
-    shortcut: ['u', 'i'],
-    isActive: false,
-    items: []
-  },
-  {
     title: 'Maintenance',
     url: '/dashboard/maintenance',
     icon: 'settings',

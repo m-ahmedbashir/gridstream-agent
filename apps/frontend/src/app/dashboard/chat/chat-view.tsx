@@ -4,10 +4,9 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, UIToolInvocation } from 'ai';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { IconSend, IconRobot, IconUser, IconSparkles, IconCheck, IconX } from '@tabler/icons-react';
+import { IconSend, IconRobot, IconUser, IconSparkles, IconX } from '@tabler/icons-react';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { DeleteInvoiceReview } from '@/components/review/delete-invoice-review';
 
 type ChatMessage = {
   id: string;
@@ -19,14 +18,6 @@ type ChatMessage = {
 type ChatRow =
   | { id: string; kind: 'message'; message: ChatMessage }
   | { id: 'loading'; kind: 'loading' };
-
-type InvoicePreview = {
-  id?: string;
-  invoiceNumber?: string;
-  vendorName?: string;
-  totalAmount?: number;
-  currency?: string;
-};
 
 function extractMessageText(message: { content?: string; parts?: Array<{ type?: string; text?: string }> }) {
   if (typeof message.content === 'string' && message.content.trim().length > 0) {
@@ -46,16 +37,16 @@ function extractMessageText(message: { content?: string; parts?: Array<{ type?: 
 }
 
 export function ChatView() {
-  const { messages, sendMessage, status, error, addToolApprovalResponse, addToolOutput, stop } = useChat({
+  const { messages, sendMessage, status, error, stop } = useChat({
     transport: new DefaultChatTransport({ api: '/api/chat' }),
   });
   const [input, setInput] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const suggestions = [
-    "What is my total spent?",
-    "List my AWS invoices",
-    "Which invoices are pending?"
+    "What maintenance measures are available?",
+    "How is confidence calculated?",
+    "What does plan approval do?"
   ];
 
   const handleSuggestionClick = async (suggestion: string) => {
@@ -167,10 +158,6 @@ export function ChatView() {
               const message = row.message;
               const messageText = extractMessageText(message);
               const showToolPlaceholder = message.role === 'assistant' && !messageText;
-              
-              const toolInvocations = message.parts
-                ?.filter((part): part is any => typeof part.type === 'string' && part.type.startsWith('tool-'))
-                .map((part) => part) || [];
 
               return (
                 <div className='py-3'>
@@ -188,83 +175,11 @@ export function ChatView() {
                       >
                         {messageText ? (
                           messageText
-                        ) : showToolPlaceholder && toolInvocations.length === 0 ? (
+                        ) : showToolPlaceholder ? (
                           <span className='flex items-center gap-2 italic opacity-50'>
                             <IconRobot className='h-4 w-4 animate-pulse' /> Using internal tools...
                           </span>
                         ) : null}
-                        
-                        {toolInvocations.map((invocation: any) => {
-                          if (invocation.type === 'tool-deleteInvoice' && (invocation.state === 'approval-requested' || invocation.state === 'input-available')) {
-                            const preview: InvoicePreview = invocation.input ?? {};
-                            const canDelete = Boolean(preview.id || preview.invoiceNumber);
-                            return (
-                              <div key={invocation.toolCallId} className="mt-3">
-                                <DeleteInvoiceReview 
-                                  toolCallId={invocation.toolCallId}
-                                  invoiceId={preview.id}
-                                  invoiceNumber={preview.invoiceNumber}
-                                  vendorName={preview.vendorName}
-                                  totalAmount={preview.totalAmount}
-                                  currency={preview.currency}
-                                  onApprove={async () => {
-                                    const invoiceId = preview.id;
-                                    const invoiceNumber = preview.invoiceNumber;
-
-                                    try {
-                                      if (invoiceId) {
-                                        const response = await fetch(`http://localhost:3001/invoices/${invoiceId}`, {
-                                          method: 'DELETE'
-                                        });
-
-                                        if (!response.ok) {
-                                          throw new Error(`Delete failed with status ${response.status}`);
-                                        }
-                                      } else if (invoiceNumber) {
-                                        const response = await fetch('http://localhost:3001/invoices/delete-by-number', {
-                                          method: 'POST',
-                                          headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ invoiceNumber })
-                                        });
-
-                                        if (!response.ok) {
-                                          throw new Error(`Delete failed with status ${response.status}`);
-                                        }
-                                      } else {
-                                        throw new Error('Missing invoice identifier');
-                                      }
-
-                                      await addToolApprovalResponse({ id: invocation.toolCallId, approved: true });
-                                      await addToolOutput({ toolCallId: invocation.toolCallId, tool: 'deleteInvoice', output: { success: true, message: 'Invoice deleted successfully' } });
-                                    } catch {
-                                      await addToolApprovalResponse({ id: invocation.toolCallId, approved: false, reason: 'Deletion failed' });
-                                    }
-                                  }}
-                                  onReject={async () => {
-                                    await addToolApprovalResponse({ id: invocation.toolCallId, approved: false, reason: 'Deletion cancelled by user' });
-                                  }}
-                                />
-                              </div>
-                            );
-                          }
-                          if (invocation.type === 'tool-deleteInvoice' && invocation.state === 'output-available') {
-                            const isSuccess = invocation.output?.success;
-                            return (
-                               <div key={invocation.toolCallId} className="mt-3 p-3 bg-secondary/30 border rounded-lg text-sm text-foreground flex items-center gap-2">
-                                 {isSuccess ? <IconCheck className="text-green-500 w-4 h-4"/> : <IconX className="text-destructive w-4 h-4" />}
-                                 {isSuccess ? `Invoice ${invocation.input?.invoiceNumber || ''} deleted.` : `Deletion cancelled for invoice ${invocation.input?.invoiceNumber || ''}.`}
-                               </div>
-                            )
-                          }
-                          if (invocation.type === 'tool-deleteInvoice' && invocation.state === 'approval-responded') {
-                            return (
-                               <div key={invocation.toolCallId} className="mt-3 p-3 bg-secondary/30 border rounded-lg text-sm text-foreground flex items-center gap-2">
-                                 <IconRobot className="w-4 h-4" /> Processing deletion...
-                               </div>
-                            )
-                          }
-                          return null;
-                        })}
                       </div>
                     </div>
                   </div>

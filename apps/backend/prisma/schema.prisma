@@ -1,4 +1,4 @@
-// This is your Prisma schema file,
+// This is your Prisma schema file
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
@@ -13,39 +13,13 @@ datasource db {
 model User {
   id                String   @id @default(cuid())
   clerkId           String   @unique
-  extractionMode    String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
   planApprovalMode  String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
   modelKey          String   @default("groq:llama-4-scout") // key into MODEL_REGISTRY (apps/backend/src/modules/extraction/model-registry.ts)
   encryptedApiKey   String?  // AES-256-GCM ciphertext (see common/crypto/) — NEVER the plaintext key. Null = use the app's shared key.
   processingMode    String   @default("vision") // "vision" | "local-ocr" — how images/scanned PDFs get read
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  documents         Document[]
   machineProfiles   MachineProfile[]
-}
-
-model Document {
-  id               String   @id @default(cuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Which document-type registry entry (see extraction/document-type-registry.ts) this was extracted with.
-  documentType     String   // "invoice" | "receipt" | "resume"
-
-  // The type-specific extracted fields (shape matches that type's Zod schema in @maintain/shared).
-  data             Json
-
-  // AI confidence — stored alongside the extracted data
-  fieldConfidence  Json?    // { <field>: 0.95, ... }
-  avgConfidence    Float?
-
-  // Status
-  status           String   @default("APPROVED") // APPROVED | REJECTED | PENDING
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@index([userId])
-  @@index([documentType])
 }
 
 model ExtractionLog {
@@ -53,7 +27,7 @@ model ExtractionLog {
 
   // What came in
   sourceType       String   // PDF | IMAGE | TEXT | CSV | JSON
-  documentType     String?  // "invoice" | "receipt" | "resume" — null for old rows predating this field
+  documentType     String?  // e.g. "maintenance_report"
   originalFileName String?
   fileSizeBytes    Int?
 
@@ -69,7 +43,6 @@ model ExtractionLog {
   // Outcome
   success          Boolean  @default(true)
   errorMessage     String?
-  invoiceId        String?  // set when the user saves/approves the invoice
 
   createdAt        DateTime @default(now())
 

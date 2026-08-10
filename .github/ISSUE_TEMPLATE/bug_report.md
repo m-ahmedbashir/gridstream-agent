@@ -22,4 +22,4 @@ What you expected to happen instead.
 - File type involved, if relevant (PDF / image / text / CSV / JSON)
 
 **Logs / screenshots**
-Paste any relevant error output. Redact anything sensitive (API keys, invoice contents with real PII).
+Paste any relevant error output. Redact anything sensitive (API keys, maintenance report contents with real PII).
