@@ -12,8 +12,12 @@ export interface TelemetryReading {
 
 export interface TelemetrySnapshot {
     machineProfileId: string;
+    machineId: string;
+    /** The machine's static business-importance rating — unrelated to `status` below. */
+    criticality: string;
     baseline: number;
     unit: string;
+    /** Live sensor health, derived from the latest reading vs. baseline — unrelated to `criticality` above. */
     status: ReadingStatus;
     suggestedIssues: string[];
     readings: TelemetryReading[];

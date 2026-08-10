@@ -182,6 +182,16 @@ export function LiveMonitoringView() {
 
     return (
         <div className='space-y-6'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+                <div>
+                    <h2 className='text-xl font-semibold'>{data.machineId}</h2>
+                    <div className='mt-1 flex items-center gap-2 text-sm text-muted-foreground'>
+                        <span>Criticality (business importance):</span>
+                        <Badge className={CRITICALITY_STYLES[data.criticality] ?? CRITICALITY_STYLES.medium}>{data.criticality}</Badge>
+                    </div>
+                </div>
+            </div>
+
             <Alert>
                 <IconActivity className='h-4 w-4' />
                 <AlertTitle>Simulated telemetry</AlertTitle>
@@ -194,11 +204,11 @@ export function LiveMonitoringView() {
             <Card>
                 <CardHeader>
                     <CardTitle className='flex items-center justify-between'>
-                        <span>Machine Health</span>
+                        <span>Live Status</span>
                         <Badge className={STATUS_STYLES[data.status]}>{data.status}</Badge>
                     </CardTitle>
                     <CardDescription>
-                        Current: {latest?.value ?? '—'}{data.unit} · Baseline: ~{data.baseline}{data.unit}
+                        Current sensor reading, not the machine&apos;s criticality above · {latest?.value ?? '—'}{data.unit} vs. baseline ~{data.baseline}{data.unit}
                         {dataUpdatedAt ? ` · Updated ${new Date(dataUpdatedAt).toLocaleTimeString('de-DE')}` : ''}
                     </CardDescription>
                 </CardHeader>
