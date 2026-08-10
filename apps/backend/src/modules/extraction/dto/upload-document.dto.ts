@@ -1,23 +1,25 @@
 import { z } from 'zod';
 import { createZodDto } from 'nestjs-zod';
+import { DOCUMENT_TYPE_KEYS } from '../document-type-registry';
 
 /**
  * Zod schema for the multipart upload request.
  * The file itself is provided via @UploadedFile() — this DTO carries
  * any additional metadata fields sent alongside the file.
  */
-export const UploadInvoiceSchema = z.object({
+export const UploadDocumentSchema = z.object({
     /**
-     * Optional hint about the invoice type.
-     * e.g. 'vendor', 'customer', 'credit-note'
+     * Which document-type registry entry to extract with (see document-type-registry.ts).
+     * 'auto' (the default) classifies the document against the model instead of
+     * requiring the caller to know the type up front.
      */
-    invoiceType: z
-        .enum(['vendor', 'customer', 'credit-note', 'other'])
+    documentType: z
+        .enum([...DOCUMENT_TYPE_KEYS, 'auto'])
         .optional()
-        .default('other'),
+        .default('auto'),
 
     /**
-     * Optional ISO-4217 currency code for the invoice.
+     * Optional ISO-4217 currency code, when relevant to the document type (e.g. invoice/receipt).
      * e.g. 'USD', 'EUR', 'GBP'
      */
     currency: z.string().length(3).toUpperCase().optional(),
@@ -51,4 +53,4 @@ export const UploadInvoiceSchema = z.object({
 
 });
 
-export class UploadInvoiceDto extends createZodDto(UploadInvoiceSchema) { }
+export class UploadDocumentDto extends createZodDto(UploadDocumentSchema) { }

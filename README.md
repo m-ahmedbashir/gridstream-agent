@@ -1,4 +1,6 @@
-# Unstructured-to-Ops Action Agent
+# OPP Agent
+
+**Unstructured-to-Ops Action Agent** — turns messy real-world documents into validated, database-ready data.
 
 [![CI](https://github.com/m-ahmedbashir/opp-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/m-ahmedbashir/opp-agent/actions/workflows/ci.yml)
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
@@ -23,7 +25,7 @@
 
 ## Overview
 
-**Unstructured-to-Ops Action Agent** is a "Buffer Agent" that bridges unstructured, messy real-world documents and structured operational data. Instead of a conversational chatbot, it actively closes the manual-data-entry gap: extract, validate, and stage invoice data for database ingestion behind a **Human-in-the-Loop (HITL)** governance layer — nothing consequential happens without an explicit human approval step.
+Someone on your ops team is manually retyping invoice PDFs and photos into a database right now — slow, error-prone, and it doesn't scale. **OPP Agent** automates that step without removing the human: it extracts, validates, and stages the data behind a **Human-in-the-Loop (HITL)** governance layer, so nothing consequential saves without an explicit approval click.
 
 Whether the input is a scanned invoice photo, a plain-text export, or a pasted CSV, the agent processes it with **Groq (Llama 4 Scout)** through the **Vercel AI SDK**, validates every field against a **Zod** schema shared across the whole stack, and surfaces a per-field confidence score so a reviewer knows exactly what to double-check instead of re-reading everything blindly.
 

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ExtractionResponseSchema = exports.InvoiceConfidenceSchema = exports.InvoiceSchema = exports.InvoiceLineItemSchema = void 0;
+exports.InvoiceConfidenceSchema = exports.InvoiceSchema = exports.InvoiceLineItemSchema = void 0;
 const zod_1 = require("zod");
 exports.InvoiceLineItemSchema = zod_1.z.object({
     description: zod_1.z.string().describe('Item description'),
@@ -44,19 +44,4 @@ exports.InvoiceConfidenceSchema = zod_1.z.object({
     totalAmount: zod_1.z.number().describe('Confidence score 0.0–1.0 for totalAmount'),
     currency: zod_1.z.number().describe('Confidence score 0.0–1.0 for currency'),
     lineItems: zod_1.z.number().describe('Confidence score 0.0–1.0 for the line items array as a whole'),
-});
-/**
- * Combined response schema passed to `generateObject()`.
- * Wraps the invoice extraction result, per-field confidence scores, and the
- * image-PII flag into a single validated object — no manual JSON.parse needed.
- */
-exports.ExtractionResponseSchema = zod_1.z.object({
-    invoice: exports.InvoiceSchema,
-    confidence: exports.InvoiceConfidenceSchema,
-    /**
-     * Set to true if the image(s) visibly show personal PII (email, phone, IBAN,
-     * card number) anywhere in the frame — including outside structured invoice fields.
-     * Always false when no image was sent.
-     */
-    imagePiiDetected: zod_1.z.boolean().describe('True if personal PII is visibly present in any provided image'),
 });
