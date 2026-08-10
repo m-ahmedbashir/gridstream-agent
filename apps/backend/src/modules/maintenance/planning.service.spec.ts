@@ -34,8 +34,11 @@ describe('PlanningService', () => {
             manufacturer: 'DMG',
             yearInstalled: 2020,
             runtimeHours: 15000,
+            lastServiceDate: null,
             observedIssues: ['Spindel läuft unrund'],
+            energyConsumptionKwh: null,
             criticality: 'high',
+            location: null,
             ...overrides,
         };
     }

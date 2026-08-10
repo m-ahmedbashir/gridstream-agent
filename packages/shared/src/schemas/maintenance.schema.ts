@@ -26,11 +26,11 @@ export const MachineProfileSchema = z
     manufacturer: z.string().describe('Machine manufacturer or vendor'),
     yearInstalled: z.number().int().min(1900).max(2030).describe('Year the machine was installed'),
     runtimeHours: z.number().int().min(0).describe('Total operating hours'),
-    lastServiceDate: z.string().datetime().optional().describe('ISO datetime of last service, if known'),
+    lastServiceDate: z.string().datetime().nullable().describe('ISO datetime of last service, or null if not known'),
     observedIssues: z.array(z.string()).describe('List of observed issues from the report'),
-    energyConsumptionKwh: z.number().optional().describe('Energy consumption per hour in kWh, if stated'),
+    energyConsumptionKwh: z.number().nullable().describe('Energy consumption per hour in kWh, or null if not stated'),
     criticality: Criticality.describe('Criticality level for production'),
-    location: z.string().optional().describe('Physical location in the plant, if stated'),
+    location: z.string().nullable().describe('Physical location in the plant, or null if not stated'),
   })
   .strict();
 
@@ -110,12 +110,12 @@ export const ProjectPlanSchema = z
     totalInvestment: z.number().int(),
     totalAnnualSavings: z.number().int(),
     paybackMonths: z.number(),
-    totalDowntimeHours: z.number().optional(),
-    totalCo2ReductionKg: z.number().optional(),
+    totalDowntimeHours: z.number().nullable(),
+    totalCo2ReductionKg: z.number().nullable(),
     confidence: z.number().min(0).max(1),
     measures: z.array(PlannedMeasureSchema),
     executiveSummary: z.string().describe('German executive summary for the plant manager'),
-    executiveSummaryEn: z.string().optional().describe('English backup of the executive summary'),
+    executiveSummaryEn: z.string().nullable().describe('English backup of the executive summary, or null'),
     generatedAt: z.string().datetime(),
   })
   .strict();

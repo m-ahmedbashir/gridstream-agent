@@ -60,8 +60,11 @@ describe('MatchingService', () => {
             manufacturer: 'DMG',
             yearInstalled: 2020,
             runtimeHours: 15000,
+            lastServiceDate: null,
             observedIssues: [],
+            energyConsumptionKwh: null,
             criticality: 'high',
+            location: null,
         };
 
         const result = await service.findMeasures(profile);
@@ -108,8 +111,11 @@ describe('MatchingService', () => {
             manufacturer: 'DMG',
             yearInstalled: 2020,
             runtimeHours: 15000,
+            lastServiceDate: null,
             observedIssues: [],
+            energyConsumptionKwh: null,
             criticality: 'high',
+            location: null,
         };
 
         const result = await service.findMeasures(profile);
@@ -140,8 +146,11 @@ describe('MatchingService', () => {
             manufacturer: 'DMG',
             yearInstalled: 2020,
             runtimeHours: 15000,
+            lastServiceDate: null,
             observedIssues: [],
+            energyConsumptionKwh: null,
             criticality: 'high',
+            location: null,
         };
 
         const result = await service.findMeasures(profile);
