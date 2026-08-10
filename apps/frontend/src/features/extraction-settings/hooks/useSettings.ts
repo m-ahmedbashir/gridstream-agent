@@ -3,12 +3,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/nextjs';
 
-export type ExtractionMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
 export type PlanApprovalMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
 export type ProcessingMode = 'vision' | 'local-ocr';
 
 export interface UserSettings {
-  extractionMode: ExtractionMode;
   planApprovalMode: PlanApprovalMode;
   modelKey: string;
   processingMode: ProcessingMode;
@@ -17,7 +15,6 @@ export interface UserSettings {
 }
 
 export interface SettingsUpdate {
-  extractionMode?: ExtractionMode;
   planApprovalMode?: PlanApprovalMode;
   modelKey?: string;
   processingMode?: ProcessingMode;
@@ -30,7 +27,7 @@ function resolveUserId(userId: string | null | undefined) {
 }
 
 /**
- * Hook to manage user extraction settings (extraction mode + model preference).
+ * Hook to manage user settings (plan approval mode + model preference + processing mode).
  * Fetches and updates settings from the backend using TanStack React Query.
  */
 export function useSettings() {

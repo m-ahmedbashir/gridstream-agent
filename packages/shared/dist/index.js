@@ -21,8 +21,5 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // ─── Re-export everything below as you add modules ────────────────────────────
-__exportStar(require("./schemas/invoice.schema"), exports);
-__exportStar(require("./schemas/receipt.schema"), exports);
-__exportStar(require("./schemas/resume.schema"), exports);
 __exportStar(require("./schemas/document-response.schema"), exports);
 __exportStar(require("./schemas/maintenance.schema"), exports);

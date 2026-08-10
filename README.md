@@ -81,14 +81,13 @@ maintain-agent/
 │   ├── frontend/       # Next.js app — dashboard, chat assistant, maintenance UI
 │   └── backend/        # NestJS API
 │       └── src/modules/
-│           ├── extraction/           # Invoice/receipt/resume extraction pipeline
+│           ├── extraction/           # Generic extraction pipeline (PDF, OCR, vision, model registry)
 │           ├── compliance/           # PII masking
 │           ├── maintenance/          # Maintenance report extraction, matching, planning
 │           │   ├── maintenance-extraction.service.ts
 │           │   ├── matching.service.ts
 │           │   └── planning.service.ts
-│           ├── users/                # Per-user extraction/plan approval settings
-│           └── invoices/             # CRUD for saved invoices
+│           └── users/                # Per-user plan approval/model settings
 ├── packages/
 │   └── shared/         # @maintain/shared — Zod schemas and shared types
 ├── demo-data/        # Synthetic German maintenance reports
@@ -265,7 +264,7 @@ Issues and PRs are genuinely welcome. Before opening one:
 
 The frontend started from [next-shadcn-dashboard-starter](https://github.com/Kiranism/next-shadcn-dashboard-starter) by [Kiranism](https://github.com/Kiranism) (dashboard shell, shadcn/ui setup, auth scaffolding) — since substantially extended with the maintenance extraction pipeline, chat assistant, and review UI described above.
 
-Built on the original [opp-agent](https://github.com/m-ahmedbashir/opp-agent) agentic pipeline (Vercel AI SDK, Zod, HITL governance).
+Built with Vercel AI SDK, Zod, and Human-in-the-Loop governance patterns.
 
 ## 📄 License
 

@@ -9,8 +9,5 @@ export interface ApiResponse<T = unknown> {
     data?: T;
     error?: string;
 }
-export * from './schemas/invoice.schema';
-export * from './schemas/receipt.schema';
-export * from './schemas/resume.schema';
 export * from './schemas/document-response.schema';
 export * from './schemas/maintenance.schema';
