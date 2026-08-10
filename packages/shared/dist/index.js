@@ -1,6 +1,6 @@
 "use strict";
 /**
- * @opp/shared
+ * @maintain/shared
  * Shared types, constants, and utilities consumed by both the frontend and backend.
  *
  * Add your shared code here (DTOs, Zod schemas, enums, helper functions, etc.)
@@ -21,7 +21,5 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // ─── Re-export everything below as you add modules ────────────────────────────
-__exportStar(require("./schemas/invoice.schema"), exports);
-__exportStar(require("./schemas/receipt.schema"), exports);
-__exportStar(require("./schemas/resume.schema"), exports);
 __exportStar(require("./schemas/document-response.schema"), exports);
+__exportStar(require("./schemas/maintenance.schema"), exports);

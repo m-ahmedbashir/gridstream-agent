@@ -1,5 +1,5 @@
 {
-  "name": "backend",
+  "name": "@maintain/backend",
   "version": "0.0.1",
   "description": "",
   "author": "Ahmed Bashir",
@@ -20,7 +20,11 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "db:seed": "ts-node prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.96",
@@ -30,7 +34,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
-    "@opp/shared": "workspace:*",
+    "@maintain/shared": "workspace:*",
     "@prisma/client": "^6.19.3",
     "ai": "^6.0.116",
     "nestjs-zod": "^5.1.1",

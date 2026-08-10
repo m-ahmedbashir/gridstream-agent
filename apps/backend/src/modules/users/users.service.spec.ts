@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 
-type MockUser = { extractionMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
+type MockUser = { planApprovalMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
 
 function makePrismaMock(existingUser: MockUser | null = null) {
     return {
@@ -11,7 +11,7 @@ function makePrismaMock(existingUser: MockUser | null = null) {
             findUnique: jest.fn().mockResolvedValue(existingUser),
             upsert: jest.fn().mockImplementation(({ create, update }) =>
                 Promise.resolve({
-                    extractionMode: update.extractionMode ?? create.extractionMode,
+                    planApprovalMode: update.planApprovalMode ?? create.planApprovalMode,
                     modelKey: update.modelKey ?? create.modelKey,
                     processingMode: update.processingMode ?? create.processingMode,
                     encryptedApiKey: 'encryptedApiKey' in update ? update.encryptedApiKey : create.encryptedApiKey ?? null,
@@ -43,28 +43,28 @@ describe('UsersService', () => {
     });
 
     describe('getSettings()', () => {
-        it('returns defaults (MANUAL_REVIEW + groq:llama-4-scout + vision + no key) when the user does not exist yet', async () => {
+        it('returns defaults (MANUAL_REVIEW + openrouter:nemotron-nano-12b-v2-vl-free + vision + no key) when the user does not exist yet', async () => {
             const prisma = makePrismaMock(null);
             const service = new UsersService(prisma, encryptionService);
 
             const settings = await service.getSettings('new-user');
 
             expect(settings).toEqual({
-                extractionMode: 'MANUAL_REVIEW',
-                modelKey: 'groq:llama-4-scout',
+                planApprovalMode: 'MANUAL_REVIEW',
+                modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                 processingMode: 'vision',
                 hasApiKey: false,
             });
         });
 
         it('returns the stored values when the user already has settings', async () => {
-            const prisma = makePrismaMock({ extractionMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
+            const prisma = makePrismaMock({ planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             const settings = await service.getSettings('existing-user');
 
             expect(settings).toEqual({
-                extractionMode: 'AUTO_APPROVE',
+                planApprovalMode: 'AUTO_APPROVE',
                 modelKey: 'openai:gpt-4o',
                 processingMode: 'vision',
                 hasApiKey: false,
@@ -73,8 +73,8 @@ describe('UsersService', () => {
 
         it('reports hasApiKey=true but never returns the encrypted value itself', async () => {
             const prisma = makePrismaMock({
-                extractionMode: 'MANUAL_REVIEW',
-                modelKey: 'groq:llama-4-scout',
+                planApprovalMode: 'MANUAL_REVIEW',
+                modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                 processingMode: 'vision',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
             });
@@ -93,13 +93,13 @@ describe('UsersService', () => {
             const prisma = makePrismaMock(null);
             const service = new UsersService(prisma, encryptionService);
 
-            await service.updateSettings('new-user', { extractionMode: 'AUTO_APPROVE' });
+            await service.updateSettings('new-user', { planApprovalMode: 'AUTO_APPROVE' });
 
             expect(prisma.user.upsert).toHaveBeenCalledWith(
                 expect.objectContaining({
                     create: expect.objectContaining({
-                        extractionMode: 'AUTO_APPROVE',
-                        modelKey: 'groq:llama-4-scout', // untouched field defaults, doesn't come back as undefined
+                        planApprovalMode: 'AUTO_APPROVE',
+                        modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', // untouched field defaults, doesn't come back as undefined
                         processingMode: 'vision',
                     }),
                 }),
@@ -107,14 +107,14 @@ describe('UsersService', () => {
         });
 
         it('updates only the field actually provided, leaving the others untouched', async () => {
-            const prisma = makePrismaMock({ extractionMode: 'MANUAL_REVIEW', modelKey: 'groq:llama-4-scout', processingMode: 'vision' });
+            const prisma = makePrismaMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             await service.updateSettings('existing-user', { modelKey: 'anthropic:claude-3-5-sonnet' });
 
             const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
             expect(upsertArgs.update).toEqual({ modelKey: 'anthropic:claude-3-5-sonnet' });
-            expect(upsertArgs.update.extractionMode).toBeUndefined();
+            expect(upsertArgs.update.planApprovalMode).toBeUndefined();
             expect(upsertArgs.update.processingMode).toBeUndefined();
             expect(upsertArgs.update.encryptedApiKey).toBeUndefined();
         });
@@ -151,8 +151,8 @@ describe('UsersService', () => {
                 const result = await service.updateSettings('some-user', { apiKey: 'sk-my-real-groq-key' });
 
                 expect(result).toEqual({
-                    extractionMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:llama-4-scout',
+                    planApprovalMode: 'MANUAL_REVIEW',
+                    modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                     processingMode: 'vision',
                     updatedAt: expect.any(Date),
                     hasApiKey: true,
@@ -161,8 +161,8 @@ describe('UsersService', () => {
 
             it('clears a saved key when apiKey is an empty string', async () => {
                 const prisma = makePrismaMock({
-                    extractionMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:llama-4-scout',
+                    planApprovalMode: 'MANUAL_REVIEW',
+                    modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
                 const service = new UsersService(prisma, encryptionService);
@@ -177,13 +177,13 @@ describe('UsersService', () => {
 
             it('leaves a saved key untouched when apiKey is omitted entirely', async () => {
                 const prisma = makePrismaMock({
-                    extractionMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:llama-4-scout',
+                    planApprovalMode: 'MANUAL_REVIEW',
+                    modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
                 const service = new UsersService(prisma, encryptionService);
 
-                await service.updateSettings('existing-user', { extractionMode: 'AUTO_APPROVE' });
+                await service.updateSettings('existing-user', { planApprovalMode: 'AUTO_APPROVE' });
 
                 const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
                 expect(upsertArgs.update.encryptedApiKey).toBeUndefined();

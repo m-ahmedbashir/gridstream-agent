@@ -11,7 +11,7 @@ import {
 } from '../extraction/model-registry';
 
 export interface SettingsUpdate {
-  extractionMode?: string;
+  planApprovalMode?: string;
   modelKey?: string;
   /** How images/scanned PDFs get read: 'vision' or 'local-ocr'. */
   processingMode?: string;
@@ -38,11 +38,11 @@ export class UsersService {
   async getSettings(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { clerkId: userId },
-      select: { extractionMode: true, modelKey: true, processingMode: true, encryptedApiKey: true },
+      select: { planApprovalMode: true, modelKey: true, processingMode: true, encryptedApiKey: true },
     });
 
     return {
-      extractionMode: user?.extractionMode || 'MANUAL_REVIEW',
+      planApprovalMode: user?.planApprovalMode || 'MANUAL_REVIEW',
       modelKey: user?.modelKey || DEFAULT_MODEL_KEY,
       processingMode: user?.processingMode || DEFAULT_PROCESSING_MODE,
       hasApiKey: Boolean(user?.encryptedApiKey),
@@ -74,23 +74,23 @@ export class UsersService {
       where: { clerkId: userId },
       create: {
         clerkId: userId,
-        extractionMode: updates.extractionMode ?? 'MANUAL_REVIEW',
+        planApprovalMode: updates.planApprovalMode ?? 'MANUAL_REVIEW',
         modelKey: (updates.modelKey as ModelKey) ?? DEFAULT_MODEL_KEY,
         processingMode: updates.processingMode ?? DEFAULT_PROCESSING_MODE,
         ...(encryptedApiKey !== undefined && { encryptedApiKey }),
       },
       update: {
-        ...(updates.extractionMode !== undefined && { extractionMode: updates.extractionMode }),
+        ...(updates.planApprovalMode !== undefined && { planApprovalMode: updates.planApprovalMode }),
         ...(updates.modelKey !== undefined && { modelKey: updates.modelKey }),
         ...(updates.processingMode !== undefined && { processingMode: updates.processingMode }),
         ...(encryptedApiKey !== undefined && { encryptedApiKey }),
       },
-      select: { extractionMode: true, modelKey: true, processingMode: true, updatedAt: true, encryptedApiKey: true },
+      select: { planApprovalMode: true, modelKey: true, processingMode: true, updatedAt: true, encryptedApiKey: true },
     });
 
     // Never let the encrypted value (let alone a plaintext one) leave this method.
     return {
-      extractionMode: user.extractionMode,
+      planApprovalMode: user.planApprovalMode,
       modelKey: user.modelKey,
       processingMode: user.processingMode,
       updatedAt: user.updatedAt,
@@ -100,8 +100,8 @@ export class UsersService {
 
   /**
    * Internal-only: decrypts the caller's saved API key for immediate use in
-   * an extraction request. Never exposed over HTTP — only ExtractionController
-   * calls this, and only to hand the plaintext straight to the provider SDK.
+   * an AI request. Never exposed over HTTP — only extraction/planning services
+   * call this, and only to hand the plaintext straight to the provider SDK.
    * Returns undefined (not an error) when the user has no key saved, so
    * callers can fall back to the app's shared key.
    */
