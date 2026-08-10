@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 
-type MockUser = { extractionMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
+type MockUser = { extractionMode?: string; planApprovalMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
 
 function makePrismaMock(existingUser: MockUser | null = null) {
     return {
@@ -12,6 +12,7 @@ function makePrismaMock(existingUser: MockUser | null = null) {
             upsert: jest.fn().mockImplementation(({ create, update }) =>
                 Promise.resolve({
                     extractionMode: update.extractionMode ?? create.extractionMode,
+                    planApprovalMode: update.planApprovalMode ?? create.planApprovalMode,
                     modelKey: update.modelKey ?? create.modelKey,
                     processingMode: update.processingMode ?? create.processingMode,
                     encryptedApiKey: 'encryptedApiKey' in update ? update.encryptedApiKey : create.encryptedApiKey ?? null,
@@ -51,6 +52,7 @@ describe('UsersService', () => {
 
             expect(settings).toEqual({
                 extractionMode: 'MANUAL_REVIEW',
+                planApprovalMode: 'MANUAL_REVIEW',
                 modelKey: 'groq:llama-4-scout',
                 processingMode: 'vision',
                 hasApiKey: false,
@@ -58,13 +60,14 @@ describe('UsersService', () => {
         });
 
         it('returns the stored values when the user already has settings', async () => {
-            const prisma = makePrismaMock({ extractionMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
+            const prisma = makePrismaMock({ extractionMode: 'AUTO_APPROVE', planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             const settings = await service.getSettings('existing-user');
 
             expect(settings).toEqual({
                 extractionMode: 'AUTO_APPROVE',
+                planApprovalMode: 'AUTO_APPROVE',
                 modelKey: 'openai:gpt-4o',
                 processingMode: 'vision',
                 hasApiKey: false,
@@ -77,6 +80,7 @@ describe('UsersService', () => {
                 modelKey: 'groq:llama-4-scout',
                 processingMode: 'vision',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
+                planApprovalMode: 'MANUAL_REVIEW',
             });
             const service = new UsersService(prisma, encryptionService);
 
@@ -99,6 +103,7 @@ describe('UsersService', () => {
                 expect.objectContaining({
                     create: expect.objectContaining({
                         extractionMode: 'AUTO_APPROVE',
+                        planApprovalMode: 'MANUAL_REVIEW',
                         modelKey: 'groq:llama-4-scout', // untouched field defaults, doesn't come back as undefined
                         processingMode: 'vision',
                     }),
@@ -152,6 +157,7 @@ describe('UsersService', () => {
 
                 expect(result).toEqual({
                     extractionMode: 'MANUAL_REVIEW',
+                    planApprovalMode: 'MANUAL_REVIEW',
                     modelKey: 'groq:llama-4-scout',
                     processingMode: 'vision',
                     updatedAt: expect.any(Date),

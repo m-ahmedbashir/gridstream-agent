@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@clerk/nextjs';
 import { useSaveInvoice } from '@/features/invoice-upload/use-save-invoice';
 import { IconDeviceFloppy, IconPencil, IconCheck, IconAlertTriangle } from '@tabler/icons-react';
-import type { Invoice, InvoiceConfidence } from '@opp/shared';
+import type { Invoice, InvoiceConfidence } from '@maintain/shared';
 import type { DocumentType, ExtractedData, ExtractedConfidence } from '@/features/invoice-upload/use-extract-invoice';
 import { DOCUMENT_UI_CONFIGS, type FieldConfig } from './document-field-configs';
 

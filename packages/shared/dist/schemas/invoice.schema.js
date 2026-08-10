@@ -12,6 +12,9 @@ exports.InvoiceLineItemSchema = zod_1.z.object({
  * Nullable invoice schema — every field is optional/nullable because the model
  * may not find a value for every field in every document. The runtime always
  * produced nulls here; the types now reflect that truthfully.
+ *
+ * @deprecated Invoice extraction is kept for backward compatibility; new work
+ * should use the maintenance schemas in `maintenance.schema.ts`.
  */
 exports.InvoiceSchema = zod_1.z.object({
     invoiceNumber: zod_1.z.string().nullable().describe('Invoice number or ID, or null if not found'),

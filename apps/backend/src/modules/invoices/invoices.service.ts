@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { Invoice, InvoiceConfidence } from '@opp/shared';
+import { Invoice, InvoiceConfidence } from '@maintain/shared';
 
 /**
  * Backs the `/invoices` API (still invoice-specific — the chat assistant's

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import type { Invoice, InvoiceConfidence, Receipt, ReceiptConfidence, Resume, ResumeConfidence } from '@opp/shared';
+import type { Invoice, InvoiceConfidence, Receipt, ReceiptConfidence, Resume, ResumeConfidence } from '@maintain/shared';
 import {
     DEFAULT_MODEL_KEY,
     DEFAULT_PROCESSING_MODE,

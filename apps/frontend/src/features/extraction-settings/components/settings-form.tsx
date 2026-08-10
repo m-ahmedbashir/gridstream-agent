@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Loader2, KeyRound, CheckCircle2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useSettings, type ExtractionMode, type ProcessingMode } from '../hooks/useSettings';
+import { useSettings, type ExtractionMode, type PlanApprovalMode, type ProcessingMode } from '../hooks/useSettings';
 import { useModelOptions } from '../hooks/useModelOptions';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -27,6 +27,7 @@ export function SettingsForm() {
   const { settings, loading, error, updateSettings } = useSettings();
   const { models, loading: modelsLoading } = useModelOptions();
   const [selectedMode, setSelectedMode] = useState<ExtractionMode>('MANUAL_REVIEW');
+  const [selectedPlanApprovalMode, setSelectedPlanApprovalMode] = useState<PlanApprovalMode>('MANUAL_REVIEW');
   const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [selectedProcessingMode, setSelectedProcessingMode] = useState<ProcessingMode>('vision');
   const [isSaving, setIsSaving] = useState(false);
@@ -37,6 +38,9 @@ export function SettingsForm() {
   useEffect(() => {
     if (settings?.extractionMode) {
       setSelectedMode(settings.extractionMode);
+    }
+    if (settings?.planApprovalMode) {
+      setSelectedPlanApprovalMode(settings.planApprovalMode);
     }
     if (settings?.modelKey) {
       setSelectedModelKey(settings.modelKey);
@@ -49,6 +53,7 @@ export function SettingsForm() {
   const hasUnsavedChanges =
     !!settings &&
     (selectedMode !== settings.extractionMode ||
+      selectedPlanApprovalMode !== settings.planApprovalMode ||
       selectedModelKey !== settings.modelKey ||
       selectedProcessingMode !== settings.processingMode);
 
@@ -57,6 +62,7 @@ export function SettingsForm() {
       setIsSaving(true);
       const success = await updateSettings({
         extractionMode: selectedMode,
+        planApprovalMode: selectedPlanApprovalMode,
         modelKey: selectedModelKey,
         processingMode: selectedProcessingMode,
       });
@@ -147,6 +153,37 @@ export function SettingsForm() {
             </div>
           </div>
         </RadioGroup>
+
+        <div className='border-t pt-6 space-y-3'>
+          <Label className='text-base font-semibold'>Plan Approval Mode</Label>
+          <p className='text-sm text-muted-foreground'>
+            Governs whether generated maintenance plans are auto-approved or held for manual review.
+          </p>
+          <RadioGroup value={selectedPlanApprovalMode} onValueChange={(value) => setSelectedPlanApprovalMode(value as PlanApprovalMode)}>
+            <div className='flex items-start space-x-3 rounded-lg border p-4 hover:bg-accent cursor-pointer transition-colors'>
+              <RadioGroupItem value='AUTO_APPROVE' id='plan-auto-approve' className='mt-1' />
+              <div className='flex-1'>
+                <Label htmlFor='plan-auto-approve' className='text-base font-semibold cursor-pointer'>
+                  Auto-Approve
+                </Label>
+                <p className='text-sm text-muted-foreground mt-1'>
+                  Plans under €50k with confidence ≥ 0.8 are approved automatically.
+                </p>
+              </div>
+            </div>
+            <div className='flex items-start space-x-3 rounded-lg border p-4 hover:bg-accent cursor-pointer transition-colors'>
+              <RadioGroupItem value='MANUAL_REVIEW' id='plan-manual-review' className='mt-1' />
+              <div className='flex-1'>
+                <Label htmlFor='plan-manual-review' className='text-base font-semibold cursor-pointer'>
+                  Manual Review
+                </Label>
+                <p className='text-sm text-muted-foreground mt-1'>
+                  Every generated plan stays in draft until you approve or reject it.
+                </p>
+              </div>
+            </div>
+          </RadioGroup>
+        </div>
 
         <div className='border-t pt-6 space-y-2'>
           <Label htmlFor='model-picker' className='text-base font-semibold'>
@@ -272,7 +309,7 @@ export function SettingsForm() {
 
         {settings && !hasUnsavedChanges && (
           <p className='text-xs text-muted-foreground text-center'>
-            Current: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · {settings.modelKey} · Mode: {settings.processingMode}
+            Current: {settings.extractionMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · Plan: {settings.planApprovalMode === 'AUTO_APPROVE' ? 'Auto-Approve' : 'Manual Review'} · {settings.modelKey} · Mode: {settings.processingMode}
           </p>
         )}
       </CardContent>

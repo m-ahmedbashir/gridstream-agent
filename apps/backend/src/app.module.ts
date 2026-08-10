@@ -7,9 +7,10 @@ import { ExtractionModule } from './modules/extraction/extraction.module';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { UsersModule } from './modules/users/users.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, ComplianceModule, ExtractionModule, InvoicesModule, UsersModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, ComplianceModule, ExtractionModule, InvoicesModule, UsersModule, MaintenanceModule],
   controllers: [AppController],
   providers: [AppService],
 })
