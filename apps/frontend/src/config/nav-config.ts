@@ -33,6 +33,10 @@ export const navItems: NavItem[] = [
         url: '/dashboard/maintenance',
       },
       {
+        title: 'Live Monitoring',
+        url: '/dashboard/maintenance/live',
+      },
+      {
         title: 'Measures',
         url: '/dashboard/maintenance/measures',
       },
