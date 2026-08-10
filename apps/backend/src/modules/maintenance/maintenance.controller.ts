@@ -123,6 +123,33 @@ export class MaintenanceController {
         return plan;
     }
 
+    @Get('plans/:id')
+    async getPlan(@Param('id') id: string) {
+        const plan = await this.prisma.plan.findUnique({
+            where: { id },
+            include: { machineProfile: { select: { machineId: true } } },
+        });
+        if (!plan) {
+            throw new NotFoundException(`Plan ${id} not found`);
+        }
+
+        return {
+            planId: plan.id,
+            machineId: plan.machineProfile.machineId,
+            status: plan.status,
+            totalInvestment: plan.totalInvestment,
+            totalAnnualSavings: plan.totalAnnualSavings,
+            paybackMonths: plan.paybackMonths,
+            totalDowntimeHours: plan.totalDowntimeHours,
+            totalCo2ReductionKg: plan.totalCo2ReductionKg,
+            confidence: plan.confidence,
+            measures: plan.measures,
+            executiveSummary: plan.executiveSummary,
+            executiveSummaryEn: plan.executiveSummaryEn,
+            generatedAt: plan.generatedAt.toISOString(),
+        };
+    }
+
     @Post('plans/:id/approve')
     async approvePlan(@Param('id') id: string, @Body() body: { userId?: string }) {
         const plan = await this.prisma.plan.update({

@@ -1,14 +1,14 @@
 'use client';
 
-import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@clerk/nextjs';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { approvePlan, rejectPlan } from './use-plan';
+import { approvePlan, rejectPlan, usePlanQuery } from './use-plan';
 import { toast } from 'sonner';
-import type { ProjectPlan, PlannedMeasure } from '@maintain/shared';
+import type { PlannedMeasure } from '@maintain/shared';
 
 function StatusBadge({ status }: { status: string }) {
     const variants: Record<string, string> = {
@@ -51,20 +51,15 @@ export function PlanView() {
     const searchParams = useSearchParams();
     const planId = searchParams.get('planId') ?? '';
     const { userId } = useAuth();
-    const [plan, setPlan] = useState<ProjectPlan | null>(null);
-    const [loading, setLoading] = useState(true);
-
-    // In a real app this would fetch the persisted plan. For this demo we render
-    // whatever was passed in component state via the router, which Next.js does not
-    // preserve. A full implementation would add a GET /maintenance/plans/:id endpoint.
-    // Here we show a placeholder prompting the user to view history.
+    const queryClient = useQueryClient();
+    const { data: plan, isPending, error } = usePlanQuery(planId);
 
     const handleApprove = async () => {
         if (!planId) return;
         try {
             await approvePlan(planId, userId || 'default-user');
             toast.success('Plan approved');
-            setPlan((prev) => prev ? { ...prev, status: 'approved' } : prev);
+            queryClient.invalidateQueries({ queryKey: ['plan', planId] });
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Failed to approve plan');
         }
@@ -75,7 +70,7 @@ export function PlanView() {
         try {
             await rejectPlan(planId, userId || 'default-user');
             toast.success('Plan rejected');
-            setPlan((prev) => prev ? { ...prev, status: 'rejected' } : prev);
+            queryClient.invalidateQueries({ queryKey: ['plan', planId] });
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Failed to reject plan');
         }
@@ -86,6 +81,26 @@ export function PlanView() {
             <Card>
                 <CardContent className='p-6'>
                     <p className='text-muted-foreground'>No plan selected. Generate a plan from the measures page.</p>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    if (isPending) {
+        return (
+            <Card>
+                <CardContent className='p-6'>
+                    <p className='text-muted-foreground'>Loading plan…</p>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    if (error) {
+        return (
+            <Card>
+                <CardContent className='p-6'>
+                    <p className='text-red-600'>Error loading plan: {error.message}</p>
                 </CardContent>
             </Card>
         );

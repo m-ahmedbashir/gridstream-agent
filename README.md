@@ -42,7 +42,7 @@ The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, m
 - **Confidence as six fixed anchors.** The extraction prompt forces exactly `1.0 / 0.8 / 0.6 / 0.4 / 0.2 / 0.0`, each with a written rubric, so a score means the same thing every time.
 - **Industrial maintenance domain models.** Shared Zod schemas (`MachineProfile`, `Measure`, `ProjectPlan`) are consumed by both backend and frontend; `.strict()` rejects hallucinated extra fields.
 - **Measure matching.** Given a machine profile, the backend filters a seeded database of German industrial measures by machine type and minimum runtime, then returns the top 5 fastest-payback measures.
-- **AI-generated project plans.** The planning service uses a reasoning model (GPT-4o by default) to produce a German executive summary, scales investment/savings for larger facilities, and validates the full output against `ProjectPlanSchema`.
+- **AI-generated project plans.** All financials (investment, savings, payback, CO₂ reduction, confidence) are computed deterministically from the selected measures — the model (the same free OpenRouter default used for extraction) is only asked to write the German executive summary and an English backup, so a malformed model response can never corrupt the plan's numbers. If the model's JSON fails to parse, the raw text is used as a fallback rather than failing the plan.
 - **HITL plan governance.** A per-user `planApprovalMode` setting (`MANUAL_REVIEW` / `AUTO_APPROVE`) gates whether low-investment/high-confidence plans are auto-approved or held for manual review. `POST /maintenance/plans/:id/approve` and `POST /maintenance/plans/:id/reject` log the decision.
 - **Defense-in-depth uploads.** Files are buffered in memory only (never written to disk), and MIME type/size are validated independently at three layers (Multer, the NestJS pipe, and an in-service allowlist) before any processing starts.
 - **Real observability.** Every extraction attempt writes an `ExtractionLog` row. The `/maintenance/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, average confidence, top machine types, OCR usage rate, and vision usage rate.
@@ -101,7 +101,7 @@ maintain-agent/
 
 ## 🛠 Tech Stack
 
-- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — OpenRouter (`nvidia/nemotron-nano-12b-v2-vl:free` free-vision default), Groq (`compound-mini` free text), OpenAI (`gpt-4o` for planning), and Anthropic wired in and ready to select
+- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — OpenRouter (`nvidia/nemotron-nano-12b-v2-vl:free` free-vision default, used for both extraction and planning), Groq (`compound-mini` free text), OpenAI, and Anthropic wired in and ready to select
 - **Validation:** Zod, `nestjs-zod`
 - **Document parsing:** `pdf-parse` (PDF text-layer extraction + `@napi-rs/canvas` rasterization fallback)
 - **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`
@@ -225,7 +225,8 @@ const measures = await matchingService.findMeasures(machineProfile);
 
 ```typescript
 const plan = await planningService.generatePlan(machineProfile, selectedMeasures, userId);
-// validates against ProjectPlanSchema, persists Plan row, applies HITL auto-approve rules
+// financials computed deterministically; model only writes the executive summary;
+// persists a Plan row with a real DB id and applies HITL auto-approve rules
 ```
 
 **Human-in-the-loop — an agent can propose a plan, but can't execute one without a click:**

@@ -1,5 +1,5 @@
 import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { generateText } from 'ai';
+import { generateText, APICallError } from 'ai';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -7,6 +7,8 @@ import {
     MachineProfileSchema,
     MachineProfileConfidenceSchema,
     buildResponseSchema,
+    MachineType,
+    Criticality,
     type MachineProfile,
     type MachineProfileConfidence,
 } from '@maintain/shared';
@@ -87,13 +89,16 @@ Fields:
 - manufacturer: the machine manufacturer/vendor
 - yearInstalled: year the machine was installed (1900–2030)
 - runtimeHours: total operating hours as an integer
-- lastServiceDate: ISO-8601 datetime of last service, or null if not found
+- lastServiceDate: FULL ISO-8601 datetime with time and "Z", e.g. "2024-03-15T00:00:00Z" — never a bare date like "2024-03-15" — or null if not found
 - observedIssues: array of observed issues from the report
 - energyConsumptionKwh: energy consumption per hour in kWh, or null
 - criticality: one of low, medium, high, critical
 - location: physical plant location, or null
 
-For any field you cannot locate in the document, set it to null (or an empty array for observedIssues).
+- machineId, machineType, manufacturer, yearInstalled, runtimeHours, and criticality are REQUIRED and must NEVER be null — the schema rejects null for these. If you cannot find one, give your single best guess (e.g. "Other" for machineType, "Unknown" for manufacturer/machineId, a plausible year/hour count) and score its confidence 0.2 (or 0.0 only if you truly have zero basis, but the field itself must still hold a value).
+- lastServiceDate, energyConsumptionKwh, and location ARE nullable — set them to null if not found, with confidence 0.0.
+- observedIssues is an array — use an empty array [] if none are found, with confidence 0.0.
+- Every confidence value must be a raw JSON number (e.g. 0.8), never a quoted string (e.g. NOT "0.8").
 
 CONFIDENCE SCORING — use ONLY these six exact values for every confidence field, nothing in between:
 
@@ -230,9 +235,18 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         } catch (error) {
             const processingTimeMs = Date.now() - startTime;
             const rawErrorMessage = error instanceof Error ? error.message : 'Unknown error';
-            const errorMessage = apiKeyOverride
-                ? rawErrorMessage.split(apiKeyOverride).join('[REDACTED:API_KEY]')
-                : rawErrorMessage;
+            const redact = (message: string) =>
+                apiKeyOverride ? message.split(apiKeyOverride).join('[REDACTED:API_KEY]') : message;
+            const errorMessage = redact(rawErrorMessage);
+
+            // APICallError.message is a generic "Invalid JSON response" — the useful
+            // diagnostic (what the provider actually sent back, e.g. a rate-limit or
+            // auth error body instead of a chat completion) lives in these fields.
+            if (APICallError.isInstance(error)) {
+                this.logger.error(
+                    `AI provider call failed: status=${error.statusCode ?? 'unknown'} url=${error.url} responseBody=${redact(error.responseBody ?? '(empty)').slice(0, 2000)}`,
+                );
+            }
 
             await this.prisma.extractionLog.create({
                 data: {
@@ -433,7 +447,11 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
     ): Promise<{ data: MachineProfile; confidence: MachineProfileConfidence; imagePiiDetected: boolean }> {
         const content: any[] = [
             { type: 'text', text: MaintenanceExtractionService.EXTRACTION_PROMPT },
-            { type: 'text', text: '\n\nReturn ONLY a raw JSON object (no markdown fences, no explanations) matching this exact structure: { "data": <MachineProfile>, "confidence": <MachineProfileConfidence>, "imagePiiDetected": boolean }' },
+            {
+                type: 'text',
+                text: '\n\nReturn ONLY a raw JSON object (no markdown fences, no explanations) with exactly these three TOP-LEVEL keys — "imagePiiDetected" is a sibling of "data" and "confidence", never nested inside "data":\n' +
+                    '{ "data": { "machineId": ..., "machineType": ..., "manufacturer": ..., "yearInstalled": ..., "runtimeHours": ..., "lastServiceDate": ..., "observedIssues": [...], "energyConsumptionKwh": ..., "criticality": ..., "location": ... }, "confidence": { <one number 0.0-1.0 per field in data> }, "imagePiiDetected": <boolean> }',
+            },
         ];
 
         if (sanitisedText) {
@@ -450,7 +468,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         });
 
         const cleaned = this.extractJson(text);
-        const parsed = JSON.parse(cleaned);
+        const parsed = this.repairModelResponse(JSON.parse(cleaned));
         const validated = MaintenanceExtractionService.RESPONSE_SCHEMA.parse(parsed) as {
             data: MachineProfile;
             confidence: MachineProfileConfidence;
@@ -462,6 +480,81 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             confidence: validated.confidence,
             imagePiiDetected: (buffers?.length ?? 0) > 0 && validated.imagePiiDetected,
         };
+    }
+
+    /**
+     * Free/weak models occasionally deviate from the requested shape in a few
+     * predictable ways. Repairing those here beats hard-failing the whole
+     * extraction on an otherwise-usable response — the schema still rejects
+     * anything genuinely malformed afterwards.
+     */
+    private repairModelResponse(parsed: unknown): unknown {
+        if (typeof parsed !== 'object' || parsed === null) {
+            return parsed;
+        }
+        const root = parsed as Record<string, any>;
+        const data = root.data;
+        if (typeof data !== 'object' || data === null) {
+            return root;
+        }
+
+        // Some models nest imagePiiDetected inside `data` instead of at the top level.
+        if (root.imagePiiDetected === undefined && 'imagePiiDetected' in data) {
+            root.imagePiiDetected = data.imagePiiDetected;
+            delete data.imagePiiDetected;
+        }
+
+        const confidence = typeof root.confidence === 'object' && root.confidence !== null ? root.confidence : undefined;
+
+        // Weak models sometimes quote confidence numbers as strings (e.g. "0.8").
+        if (confidence) {
+            for (const key of Object.keys(confidence)) {
+                if (typeof confidence[key] === 'string') {
+                    const num = Number(confidence[key]);
+                    confidence[key] = Number.isFinite(num) ? num : 0;
+                }
+            }
+        }
+
+        const downgrade = (field: string) => {
+            if (confidence && typeof confidence[field] === 'number') {
+                confidence[field] = 0.2;
+            }
+        };
+
+        // lastServiceDate must be a strict ISO-8601 datetime with a time and "Z" —
+        // models often give a bare date ("2024-03-15") or a localized date.
+        if (typeof data.lastServiceDate === 'string') {
+            const parsedDate = new Date(data.lastServiceDate);
+            if (Number.isNaN(parsedDate.getTime())) {
+                // Unparseable — null it out with zero confidence, per the "null implies 0.0" rule.
+                data.lastServiceDate = null;
+                if (confidence && typeof confidence.lastServiceDate === 'number') {
+                    confidence.lastServiceDate = 0;
+                }
+            } else {
+                data.lastServiceDate = parsedDate.toISOString();
+            }
+        }
+
+        if (typeof data.yearInstalled === 'number' && (data.yearInstalled < 1900 || data.yearInstalled > 2030)) {
+            data.yearInstalled = Math.min(2030, Math.max(1900, Math.round(data.yearInstalled)));
+            downgrade('yearInstalled');
+        }
+        if (typeof data.runtimeHours === 'number' && data.runtimeHours < 0) {
+            data.runtimeHours = 0;
+            downgrade('runtimeHours');
+        }
+        if (typeof data.machineType === 'string' && !(MachineType.options as readonly string[]).includes(data.machineType)) {
+            data.machineType = 'Other';
+            downgrade('machineType');
+        }
+        if (typeof data.criticality === 'string' && !(Criticality.options as readonly string[]).includes(data.criticality)) {
+            data.criticality = 'medium';
+            downgrade('criticality');
+        }
+
+        return root;
     }
 
     private extractJson(text: string): string {
