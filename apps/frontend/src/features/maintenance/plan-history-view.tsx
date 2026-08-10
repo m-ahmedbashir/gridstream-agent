@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useAuth } from '@clerk/nextjs';
 import { usePlanHistory } from './use-plan-history';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -35,7 +36,8 @@ export function PlanHistoryView() {
     return (
         <div className='space-y-4'>
             {plans.map((plan) => (
-                <Card key={plan.id}>
+                <Link key={plan.id} href={`/dashboard/maintenance/plan?planId=${plan.id}`} className='block'>
+                <Card className='transition-colors hover:bg-muted/40'>
                     <CardHeader>
                         <CardTitle className='flex items-center justify-between text-base'>
                             <span>
@@ -66,6 +68,7 @@ export function PlanHistoryView() {
                         <p className='text-sm text-muted-foreground line-clamp-3'>{plan.executiveSummary}</p>
                     </CardContent>
                 </Card>
+                </Link>
             ))}
             {plans.length === 0 && (
                 <Card>

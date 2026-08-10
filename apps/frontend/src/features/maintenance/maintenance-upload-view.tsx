@@ -67,30 +67,49 @@ function MachineProfileCard({ profile, machineProfileId }: { profile: MachinePro
     );
 }
 
+type ExtractionOutcome =
+    | { status: 'success'; fileName: string; profile: MachineProfile; machineProfileId: string }
+    | { status: 'error'; fileName: string; message: string };
+
+// Bounded, not unlimited — the free-tier AI keys behind extraction rate-limit,
+// so firing all uploads at once risks 429s instead of finishing faster.
+const EXTRACTION_CONCURRENCY = 3;
+
 export function MaintenanceUploadView() {
     const [files, setFiles] = useState<File[]>([]);
     const [pastedText, setPastedText] = useState('');
-    const [result, setResult] = useState<{ profile: MachineProfile; machineProfileId: string } | null>(null);
+    const [results, setResults] = useState<ExtractionOutcome[]>([]);
 
     const { mutateAsync: extractMaintenance, isPending } = useExtractMaintenance();
 
     const handleUploadFiles = async (filesToUpload: File[]) => {
-        try {
-            for (const file of filesToUpload) {
-                const res = await extractMaintenance({ file });
-                setResult({ profile: res.extractedData, machineProfileId: res.machineProfileId });
-            }
-            setFiles([]);
-        } catch (error) {
-            console.error(error);
+        setResults([]);
+        const outcomes: ExtractionOutcome[] = [];
+
+        for (let i = 0; i < filesToUpload.length; i += EXTRACTION_CONCURRENCY) {
+            const batch = filesToUpload.slice(i, i + EXTRACTION_CONCURRENCY);
+            const settled = await Promise.allSettled(batch.map((file) => extractMaintenance({ file })));
+
+            settled.forEach((outcome, idx) => {
+                const file = batch[idx];
+                outcomes.push(
+                    outcome.status === 'fulfilled'
+                        ? { status: 'success', fileName: file.name, profile: outcome.value.extractedData, machineProfileId: outcome.value.machineProfileId }
+                        : { status: 'error', fileName: file.name, message: outcome.reason instanceof Error ? outcome.reason.message : 'Extraction failed' },
+                );
+            });
+            // Update after each batch so results appear progressively rather than all at once at the end.
+            setResults([...outcomes]);
         }
+
+        setFiles([]);
     };
 
     const handleTextExtract = async () => {
         if (!pastedText.trim()) return;
         try {
             const res = await extractMaintenance({ text: pastedText });
-            setResult({ profile: res.extractedData, machineProfileId: res.machineProfileId });
+            setResults([{ status: 'success', fileName: 'pasted text', profile: res.extractedData, machineProfileId: res.machineProfileId }]);
             setPastedText('');
         } catch (error) {
             console.error(error);
@@ -200,10 +219,26 @@ export function MaintenanceUploadView() {
                 </TabsContent>
             </Tabs>
 
-            {result && (
+            {results.length > 0 && (
                 <div className="space-y-6 mt-8">
-                    <h3 className="text-xl font-semibold tracking-tight">Extracted Machine Profile</h3>
-                    <MachineProfileCard profile={result.profile} machineProfileId={result.machineProfileId} />
+                    <h3 className="text-xl font-semibold tracking-tight">
+                        Extracted Machine Profile{results.length > 1 ? 's' : ''}
+                    </h3>
+                    {results.map((outcome, i) =>
+                        outcome.status === 'success' ? (
+                            <div key={i} className='space-y-2'>
+                                <p className='text-sm text-muted-foreground'>{outcome.fileName}</p>
+                                <MachineProfileCard profile={outcome.profile} machineProfileId={outcome.machineProfileId} />
+                            </div>
+                        ) : (
+                            <Card key={i} className='border-red-200 dark:border-red-900'>
+                                <CardContent className='p-4 space-y-1'>
+                                    <p className='text-sm font-medium'>{outcome.fileName}</p>
+                                    <p className='text-sm text-red-600'>{outcome.message}</p>
+                                </CardContent>
+                            </Card>
+                        ),
+                    )}
                 </div>
             )}
         </div>

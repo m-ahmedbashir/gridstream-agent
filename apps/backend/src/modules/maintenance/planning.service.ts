@@ -1,14 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { generateText } from 'ai';
+import { z } from 'zod';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
-    ProjectPlanSchema,
     type MachineProfile,
     type Measure,
     type ProjectPlan,
     type MaintenanceTask,
 } from '@maintain/shared';
 import { resolveModel, type ModelKey } from '../extraction/model-registry';
+
+/**
+ * Every field the model could produce except these two summaries gets
+ * overwritten with our own deterministic values right after parsing (see
+ * generatePlan below) — so that's all we ask for and all we validate. Asking
+ * a free/weak model to also produce the full ProjectPlanSchema (dates, enums,
+ * nested measure/task arrays) bought nothing but extra ways to fail.
+ */
+const ExecutiveSummarySchema = z.object({
+    executiveSummary: z.string(),
+    executiveSummaryEn: z.string().nullable().optional(),
+});
 
 /**
  * PlanningService
@@ -71,7 +84,9 @@ export class PlanningService {
             })),
         }));
 
-        const planId = `plan-${profile.machineId}-${Date.now()}`;
+        // Must match the DB row's actual primary key — the frontend fetches, approves,
+        // and rejects plans by this id, so it can't be a synthetic client-side string.
+        const planId = randomUUID();
 
         // Use the model only for the executive summaries; all financials are computed here.
         const { text } = await generateText({
@@ -97,7 +112,7 @@ Machine Profile:
 Selected Measures:
 ${measures.map((m) => `- ${m.titleDe} (${m.category}): Investment €${Math.round(m.typicalInvestment * scaleFactor).toLocaleString('de-DE')}, Savings €${Math.round(m.typicalAnnualSavings * scaleFactor).toLocaleString('de-DE')}/year, Payback ${m.paybackMonths} months`).join('\n')}
 
-Computed Totals (MUST match):
+Computed Totals (for context only, mention them in the narrative — do not invent different numbers):
 - totalInvestment: ${scaledInvestment}
 - totalAnnualSavings: ${scaledAnnualSavings}
 - paybackMonths: ${Math.round(weightedPayback)}
@@ -105,16 +120,14 @@ Computed Totals (MUST match):
 - totalCo2ReductionKg: ${totalCo2ReductionKg}
 - confidence: ${confidence}
 
-Return ONLY a raw JSON object (no markdown fences, no explanations) matching the ProjectPlanSchema exactly.`,
+Return ONLY a raw JSON object (no markdown fences, no explanations) with exactly these two keys: { "executiveSummary": "<German text>", "executiveSummaryEn": "<English text>" }`,
                 },
             ],
         });
 
-        const generated = this.parseProjectPlan(text);
+        const { executiveSummary, executiveSummaryEn } = this.parseExecutiveSummaries(text, profile);
 
-        // Override model-generated computed fields with our own deterministic values.
         const plan: ProjectPlan = {
-            ...generated,
             planId,
             machineId: profile.machineId,
             status: 'draft',
@@ -125,6 +138,8 @@ Return ONLY a raw JSON object (no markdown fences, no explanations) matching the
             totalCo2ReductionKg: totalCo2ReductionKg || null,
             confidence,
             measures: plannedMeasures,
+            executiveSummary,
+            executiveSummaryEn: executiveSummaryEn ?? null,
             generatedAt: now,
         };
 
@@ -188,8 +203,16 @@ Return ONLY a raw JSON object (no markdown fences, no explanations) matching the
         }
     }
 
-    private parseProjectPlan(text: string): ProjectPlan {
-        // Strip markdown fences and surrounding text.
+    /**
+     * All of the plan's numbers are computed deterministically by this service —
+     * the model's only job is prose. If it fails to produce valid JSON for that
+     * prose, fall back to using the raw text rather than failing the whole plan
+     * (the executive summary is a nice-to-have, not load-bearing).
+     */
+    private parseExecutiveSummaries(
+        text: string,
+        profile: MachineProfile,
+    ): { executiveSummary: string; executiveSummaryEn?: string | null } {
         let cleaned = text;
         const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
         if (fenced) {
@@ -201,8 +224,14 @@ Return ONLY a raw JSON object (no markdown fences, no explanations) matching the
                 cleaned = text.slice(start, end + 1).trim();
             }
         }
-        const parsed = JSON.parse(cleaned);
-        return ProjectPlanSchema.parse(parsed) as ProjectPlan;
+
+        try {
+            const parsed = JSON.parse(cleaned);
+            return ExecutiveSummarySchema.parse(parsed);
+        } catch (error) {
+            this.logger.warn(`Model did not return valid executive-summary JSON for ${profile.machineId}; using raw text as fallback. ${error instanceof Error ? error.message : ''}`);
+            return { executiveSummary: text.trim() || `Wartungsplan für ${profile.machineId} erstellt.`, executiveSummaryEn: null };
+        }
     }
 
     private async persistPlan(profile: MachineProfile, plan: ProjectPlan, userId: string) {
@@ -217,6 +246,7 @@ Return ONLY a raw JSON object (no markdown fences, no explanations) matching the
 
         await this.prisma.plan.create({
             data: {
+                id: plan.planId,
                 machineProfileId: dbProfile.id,
                 status: plan.status,
                 confidence: plan.confidence,

@@ -97,10 +97,14 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
         case 'anthropic':
             return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
         case 'openrouter':
+            // .chat(...) forces the Chat Completions endpoint. Calling the provider
+            // directly defaults to the Responses API, which OpenRouter supports far
+            // less reliably (observed: free models hanging for minutes then
+            // returning an empty/whitespace-only body instead of a completion).
             return createOpenAI({
                 baseURL: 'https://openrouter.ai/api/v1',
                 apiKey: apiKeyOverride ?? process.env.OPENROUTER_API_KEY,
-            })(descriptor.modelId);
+            }).chat(descriptor.modelId);
     }
 }
 
