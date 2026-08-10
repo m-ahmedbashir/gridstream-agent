@@ -19,30 +19,22 @@ model User {
   processingMode   String   @default("vision") // "vision" | "local-ocr" — how images/scanned PDFs get read
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  invoices         Invoice[]
+  documents        Document[]
 }
 
-model Invoice {
+model Document {
   id               String   @id @default(cuid())
   userId           String
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Invoice fields
-  invoiceNumber    String?
-  issueDate        String?
-  dueDate          String?
-  vendorName       String?
-  vendorAddress    String?
-  customerName     String?
-  customerAddress  String?
-  subtotal         Float?
-  taxAmount        Float?
-  totalAmount      Float?
-  currency         String?
-  lineItems        Json?    // Array of line items
+  // Which document-type registry entry (see extraction/document-type-registry.ts) this was extracted with.
+  documentType     String   // "invoice" | "receipt" | "resume"
+
+  // The type-specific extracted fields (shape matches that type's Zod schema in @opp/shared).
+  data             Json
 
   // AI confidence — stored alongside the extracted data
-  fieldConfidence  Json?    // { invoiceNumber: 0.95, vendorName: 0.88, ... }
+  fieldConfidence  Json?    // { <field>: 0.95, ... }
   avgConfidence    Float?
 
   // Status
@@ -51,6 +43,7 @@ model Invoice {
   updatedAt        DateTime @updatedAt
 
   @@index([userId])
+  @@index([documentType])
 }
 
 model ExtractionLog {
@@ -58,6 +51,7 @@ model ExtractionLog {
 
   // What came in
   sourceType       String   // PDF | IMAGE | TEXT | CSV | JSON
+  documentType     String?  // "invoice" | "receipt" | "resume" — null for old rows predating this field
   originalFileName String?
   fileSizeBytes    Int?
 

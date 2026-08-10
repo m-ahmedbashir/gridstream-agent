@@ -15,3 +15,6 @@ export interface ApiResponse<T = unknown> {
 
 // ─── Re-export everything below as you add modules ────────────────────────────
 export * from './schemas/invoice.schema';
+export * from './schemas/receipt.schema';
+export * from './schemas/resume.schema';
+export * from './schemas/document-response.schema';

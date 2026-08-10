@@ -12,7 +12,7 @@ import { OcrService } from './ocr.service';
 jest.mock('ai', () => ({
     generateObject: jest.fn().mockResolvedValue({
         object: {
-            invoice: {
+            data: {
                 invoiceNumber: 'INV-001',
                 issueDate: '2024-01-01',
                 dueDate: '2024-01-31',
@@ -83,8 +83,15 @@ jest.mock('tesseract.js', () => ({
 import { generateObject } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { PDFParse } from 'pdf-parse';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Reads a synthetic "messy" sample document from test/fixtures/documents/. */
+function readFixture(name: string): string {
+    return fs.readFileSync(path.join(__dirname, '../../../test/fixtures/documents', name), 'utf-8');
+}
 
 function makeFile(
     content: string,
@@ -132,6 +139,20 @@ describe('ExtractionService', () => {
     let complianceService: ComplianceService;
     let prisma: PrismaService;
 
+    // Classification is a real feature (tested on its own further below), but
+    // every other test in this file predates it and asserts on the single
+    // extraction call — spying it out at the prototype level (so it covers
+    // every `new ExtractionService(...)` created anywhere in this file, not
+    // just the shared `service` instance) keeps generateObject's call count
+    // and mock.calls[0] exactly as those tests already expect.
+    beforeAll(() => {
+        jest.spyOn(ExtractionService.prototype as any, 'classifyDocumentType').mockResolvedValue('invoice');
+    });
+
+    afterAll(() => {
+        jest.restoreAllMocks();
+    });
+
     beforeEach(() => {
         complianceService = new ComplianceService();
         prisma = makePrismaMock();
@@ -153,8 +174,9 @@ describe('ExtractionService', () => {
                 piiDetected: false,
             });
             expect(typeof result.maskedText).toBe('string');
-            expect(typeof result.extractedInvoice).toBe('object');
-            expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
+            expect(result.documentType).toBe('invoice');
+            expect(typeof result.extractedData).toBe('object');
+            expect((result.extractedData as { invoiceNumber: string }).invoiceNumber).toBe('INV-001');
             expect(typeof result.processedAt).toBe('string');
         });
 
@@ -241,7 +263,7 @@ describe('ExtractionService', () => {
             const result = await service.processFile(file);
 
             expect(generateObject).toHaveBeenCalledTimes(1);
-            expect(result.extractedInvoice.invoiceNumber).toBe('INV-001');
+            expect((result.extractedData as { invoiceNumber: string }).invoiceNumber).toBe('INV-001');
         });
 
         it('should render every rasterized page as a separate image block sent to Groq', async () => {
@@ -303,7 +325,7 @@ describe('ExtractionService', () => {
         it('is true when an image was sent and the model flags visible PII', async () => {
             (generateObject as jest.Mock).mockResolvedValueOnce({
                 object: {
-                    invoice: { invoiceNumber: 'INV-002' },
+                    data: { invoiceNumber: 'INV-002' },
                     confidence: {},
                     imagePiiDetected: true,
                 },
@@ -316,7 +338,7 @@ describe('ExtractionService', () => {
         it('is forced to false even if the model claims it when no image was actually sent', async () => {
             (generateObject as jest.Mock).mockResolvedValueOnce({
                 object: {
-                    invoice: { invoiceNumber: 'INV-003' },
+                    data: { invoiceNumber: 'INV-003' },
                     confidence: {},
                     imagePiiDetected: true, // the model shouldn't say this with no image, but never trust it
                 },
@@ -385,6 +407,84 @@ describe('ExtractionService', () => {
             expect(models).toContainEqual(
                 expect.objectContaining({ key: 'groq:llama-3.3-70b', supportsVision: false }),
             );
+        });
+    });
+
+    describe('getDocumentTypes()', () => {
+        it('returns the document-type registry as a flat list the frontend can render directly', () => {
+            const types = service.getDocumentTypes();
+            expect(types).toContainEqual({ key: 'invoice', label: 'Invoice' });
+            expect(types).toContainEqual({ key: 'receipt', label: 'Receipt' });
+            expect(types).toContainEqual({ key: 'resume', label: 'Resume/CV' });
+        });
+    });
+
+    describe('processFile() — document-type classification', () => {
+        // These tests exercise the real classifyDocumentType() implementation
+        // (every other test in this file relies on the class-wide spy from the
+        // top-level beforeAll, which short-circuits it to 'invoice').
+        beforeEach(() => {
+            (ExtractionService.prototype as any).classifyDocumentType.mockRestore();
+        });
+
+        afterEach(() => {
+            jest.spyOn(ExtractionService.prototype as any, 'classifyDocumentType').mockResolvedValue('invoice');
+        });
+
+        it('classifies real messy document text and routes to the matching registry schema', async () => {
+            (generateObject as jest.Mock).mockResolvedValueOnce({ object: { documentType: 'receipt' } });
+            const receiptText = readFixture('receipt-messy.txt');
+            const file = makeFile(receiptText, 'text/plain', 'receipt.txt');
+
+            const result = await service.processFile(file);
+
+            expect(result.documentType).toBe('receipt');
+            expect(generateObject).toHaveBeenCalledTimes(2); // classify, then extract
+            const extractionCallArgs = (generateObject as jest.Mock).mock.calls[1][0];
+            expect(extractionCallArgs.schema.shape).toHaveProperty('data');
+        });
+
+        it('skips classification entirely when an explicit documentType override is provided', async () => {
+            const resumeText = readFixture('resume-messy.txt');
+            const file = makeFile(resumeText, 'text/plain', 'resume.txt');
+
+            const result = await service.processFile(file, undefined, undefined, undefined, undefined, 'resume');
+
+            expect(result.documentType).toBe('resume');
+            expect(generateObject).toHaveBeenCalledTimes(1); // no classification call at all
+        });
+
+        it('falls back to the default document type when classification itself throws', async () => {
+            (generateObject as jest.Mock).mockRejectedValueOnce(new Error('classification model error'));
+            const invoiceText = readFixture('invoice-messy.txt');
+            const file = makeFile(invoiceText, 'text/plain', 'invoice.txt');
+
+            const result = await service.processFile(file);
+
+            expect(result.documentType).toBe('invoice'); // DEFAULT_DOCUMENT_TYPE
+            expect(generateObject).toHaveBeenCalledTimes(2); // failed classification attempt + the extraction call that still runs
+        });
+
+        it('persists the resolved documentType on the ExtractionLog row', async () => {
+            (generateObject as jest.Mock).mockResolvedValueOnce({ object: { documentType: 'resume' } });
+            const file = makeFile(readFixture('resume-messy.txt'), 'text/plain', 'resume.txt');
+
+            await service.processFile(file);
+
+            const logCall = (prisma.extractionLog.create as jest.Mock).mock.calls[0][0];
+            expect(logCall.data.documentType).toBe('resume');
+        });
+
+        it('masks PII in the document text before it is ever sent for classification', async () => {
+            (generateObject as jest.Mock).mockResolvedValueOnce({ object: { documentType: 'invoice' } });
+            const file = makeFile('Contact billing@example.com for questions. Total: 42 USD', 'text/plain');
+
+            await service.processFile(file);
+
+            const classificationCallArgs = (generateObject as jest.Mock).mock.calls[0][0];
+            const textBlock = classificationCallArgs.messages[0].content.find((p: any) => p.type === 'text' && p.text.includes('Document text'));
+            expect(textBlock.text).not.toContain('billing@example.com');
+            expect(textBlock.text).toContain('[REDACTED:EMAIL]');
         });
     });
 
@@ -525,7 +625,7 @@ describe('ExtractionService', () => {
             const result = await svc.processFile(file);
 
             // The mock returns 1.0 for invoiceNumber — must be capped to 0.4
-            expect(result.confidence.invoiceNumber).toBeLessThanOrEqual(0.4);
+            expect((result.confidence as { invoiceNumber: number }).invoiceNumber).toBeLessThanOrEqual(0.4);
         });
 
         it('OCRs each page of a scanned PDF separately and concatenates the text', async () => {
