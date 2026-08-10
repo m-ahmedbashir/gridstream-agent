@@ -37,12 +37,12 @@ export class ComplianceService {
     /**
      * Masks all detected PII in the provided text.
      *
-     * @param text - Raw text extracted from an invoice or document.
+     * @param text - Raw text extracted from a document or maintenance report.
      * @returns A version of the text where PII is replaced with typed [REDACTED] tokens.
      *
      * @example
-     * complianceService.mask('Send invoice to alice@example.com, card: 4111 1111 1111 1111');
-     * // → 'Send invoice to [REDACTED:EMAIL], card: [REDACTED:CARD]'
+     * complianceService.mask('Send report to alice@example.com, card: 4111 1111 1111 1111');
+     * // → 'Send report to [REDACTED:EMAIL], card: [REDACTED:CARD]'
      */
     mask(text: string): string {
         const pipeline: Array<[RegExp, string]> = [

@@ -5,7 +5,7 @@ import type { LanguageModel } from 'ai';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ModelProviderName = 'groq' | 'openai' | 'anthropic';
+export type ModelProviderName = 'groq' | 'openai' | 'anthropic' | 'openrouter';
 
 export interface ModelDescriptor {
     provider: ModelProviderName;
@@ -26,16 +26,36 @@ export interface ModelDescriptor {
  * ExtractionService — that's the entire point of this file.
  */
 export const MODEL_REGISTRY = {
-    'groq:llama-4-scout': {
+    // Free on Groq; text-only, so images/scanned PDFs must go through local OCR.
+    'groq:compound-mini': {
         provider: 'groq',
-        modelId: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        supportsVision: true,
-    },
-    'groq:llama-3.3-70b': {
-        provider: 'groq',
-        modelId: 'llama-3.3-70b-versatile',
+        modelId: 'groq/compound-mini',
         supportsVision: false,
     },
+    // Free on Groq; larger compound model when you need more reasoning.
+    'groq:compound': {
+        provider: 'groq',
+        modelId: 'groq/compound',
+        supportsVision: false,
+    },
+    // Groq vision model (paid).
+    'groq:qwen3.6-27b': {
+        provider: 'groq',
+        modelId: 'qwen/qwen3.6-27b',
+        supportsVision: true,
+    },
+    // OpenRouter free vision models (no credit card required).
+    'openrouter:nemotron-nano-12b-v2-vl-free': {
+        provider: 'openrouter',
+        modelId: 'nvidia/nemotron-nano-12b-v2-vl:free',
+        supportsVision: true,
+    },
+    'openrouter:gemma-4-26b-a4b-it-free': {
+        provider: 'openrouter',
+        modelId: 'google/gemma-4-26b-a4b-it:free',
+        supportsVision: true,
+    },
+    // Paid alternatives.
     'openai:gpt-4o': {
         provider: 'openai',
         modelId: 'gpt-4o',
@@ -50,8 +70,8 @@ export const MODEL_REGISTRY = {
 
 export type ModelKey = keyof typeof MODEL_REGISTRY;
 
-/** The model used when nothing else is configured — today's behavior, unchanged. */
-export const DEFAULT_MODEL_KEY: ModelKey = 'groq:llama-4-scout';
+/** The model used when nothing else is configured — free OpenRouter vision model. */
+export const DEFAULT_MODEL_KEY: ModelKey = 'openrouter:nemotron-nano-12b-v2-vl-free';
 
 export function getModelDescriptor(key: ModelKey): ModelDescriptor {
     return MODEL_REGISTRY[key];
@@ -76,6 +96,15 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
             return createOpenAI({ apiKey: apiKeyOverride ?? process.env.OPENAI_API_KEY })(descriptor.modelId);
         case 'anthropic':
             return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
+        case 'openrouter':
+            // .chat(...) forces the Chat Completions endpoint. Calling the provider
+            // directly defaults to the Responses API, which OpenRouter supports far
+            // less reliably (observed: free models hanging for minutes then
+            // returning an empty/whitespace-only body instead of a completion).
+            return createOpenAI({
+                baseURL: 'https://openrouter.ai/api/v1',
+                apiKey: apiKeyOverride ?? process.env.OPENROUTER_API_KEY,
+            }).chat(descriptor.modelId);
     }
 }
 
@@ -83,12 +112,13 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
 
 /**
  * How images and scanned PDF pages get read:
- *  - 'vision': sent as image content parts to a vision-capable model (the
- *    original behavior). Better on messy/handwritten/angled scans.
+ *  - 'vision': sent as image content parts to a vision-capable model.
+ *    Better on messy/handwritten/angled scans; default because the default
+ *    OpenRouter model is vision-capable and free.
  *  - 'local-ocr': read locally via Tesseract before anything leaves the
  *    server, so the resulting text goes through the same PII-masking
- *    pipeline that already protects typed/pasted text. More private, weaker
- *    on messy scans — see OcrService and roadmap/phase4.md.
+ *    pipeline that already protects typed/pasted text. Use this to switch
+ *    to a free text-only Groq model (compound / compound-mini).
  */
 export type ProcessingMode = 'vision' | 'local-ocr';
 

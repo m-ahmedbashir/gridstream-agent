@@ -11,7 +11,7 @@ describe('ComplianceService', () => {
 
     describe('mask()', () => {
         it('should return the original text unchanged when no PII is present', () => {
-            const text = 'Invoice total is 1500.00 EUR for services rendered.';
+            const text = 'Maintenance report total is 1500.00 EUR for services rendered.';
             expect(service.mask(text)).toBe(text);
         });
 

@@ -22,15 +22,32 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
-    title: 'Upload Invoices',
-    url: '/dashboard/upload',
-    icon: 'upload',
-    shortcut: ['u', 'i'],
+    title: 'Maintenance',
+    url: '/dashboard/maintenance',
+    icon: 'settings',
+    shortcut: ['m', 'm'],
     isActive: false,
-    items: []
+    items: [
+      {
+        title: 'Upload Report',
+        url: '/dashboard/maintenance',
+      },
+      {
+        title: 'Measures',
+        url: '/dashboard/maintenance/measures',
+      },
+      {
+        title: 'Plan',
+        url: '/dashboard/maintenance/plan',
+      },
+      {
+        title: 'History',
+        url: '/dashboard/maintenance/history',
+      }
+    ]
   },
   {
-    title: 'My Assistant',
+    title: 'AI Assistant',
     url: '/dashboard/chat',
     icon: 'robot',
     shortcut: ['c', 'c'],
