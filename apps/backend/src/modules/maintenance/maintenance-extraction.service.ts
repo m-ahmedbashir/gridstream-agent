@@ -1,5 +1,5 @@
 import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -433,6 +433,7 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
     ): Promise<{ data: MachineProfile; confidence: MachineProfileConfidence; imagePiiDetected: boolean }> {
         const content: any[] = [
             { type: 'text', text: MaintenanceExtractionService.EXTRACTION_PROMPT },
+            { type: 'text', text: '\n\nReturn ONLY a raw JSON object (no markdown fences, no explanations) matching this exact structure: { "data": <MachineProfile>, "confidence": <MachineProfileConfidence>, "imagePiiDetected": boolean }' },
         ];
 
         if (sanitisedText) {
@@ -443,17 +444,39 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             content.push({ type: 'image', image: buffer, mimeType });
         }
 
-        const { object } = (await generateObject({
+        const { text } = await generateText({
             model: resolveModel(modelKey, apiKeyOverride),
-            schema: MaintenanceExtractionService.RESPONSE_SCHEMA,
             messages: [{ role: 'user', content }],
-        })) as { object: { data: unknown; confidence: unknown; imagePiiDetected: boolean } };
+        });
+
+        const cleaned = this.extractJson(text);
+        const parsed = JSON.parse(cleaned);
+        const validated = MaintenanceExtractionService.RESPONSE_SCHEMA.parse(parsed) as {
+            data: MachineProfile;
+            confidence: MachineProfileConfidence;
+            imagePiiDetected: boolean;
+        };
 
         return {
-            data: object.data as MachineProfile,
-            confidence: object.confidence as MachineProfileConfidence,
-            imagePiiDetected: (buffers?.length ?? 0) > 0 && object.imagePiiDetected,
+            data: validated.data,
+            confidence: validated.confidence,
+            imagePiiDetected: (buffers?.length ?? 0) > 0 && validated.imagePiiDetected,
         };
+    }
+
+    private extractJson(text: string): string {
+        // Strip markdown fences and any trailing explanation.
+        const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (fenced) {
+            return fenced[1].trim();
+        }
+        // Find the first { and last } to ignore surrounding text.
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start === -1 || end === -1 || end <= start) {
+            throw new Error('No JSON object found in model response');
+        }
+        return text.slice(start, end + 1).trim();
     }
 
     private async persistMachineProfile(userId: string, data: MachineProfile, rawText: string) {

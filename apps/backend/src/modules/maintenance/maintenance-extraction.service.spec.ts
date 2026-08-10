@@ -4,8 +4,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { OcrService } from '../extraction/ocr.service';
 
 jest.mock('ai', () => ({
-    generateObject: jest.fn().mockResolvedValue({
-        object: {
+    generateText: jest.fn().mockResolvedValue({
+        text: JSON.stringify({
             data: {
                 machineId: 'CNC-001',
                 machineType: 'CNC',
@@ -31,7 +31,7 @@ jest.mock('ai', () => ({
                 location: 1.0,
             },
             imagePiiDetected: false,
-        },
+        }),
     }),
 }));
 
@@ -54,7 +54,7 @@ jest.mock('tesseract.js', () => ({
     }),
 }));
 
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 
 describe('MaintenanceExtractionService', () => {
     let service: MaintenanceExtractionService;
@@ -112,7 +112,7 @@ describe('MaintenanceExtractionService', () => {
         await service.processFile('user-1', file);
 
         expect(maskSpy).toHaveBeenCalledTimes(1);
-        const maskedText = (generateObject as jest.Mock).mock.calls[0][0].messages[0].content.find((p: any) => p.type === 'text' && p.text.includes('Document text'))?.text;
+        const maskedText = (generateText as jest.Mock).mock.calls[0][0].messages[0].content.find((p: any) => p.type === 'text' && p.text.includes('Document text'))?.text;
         expect(maskedText).not.toContain('techniker@example.com');
         expect(maskedText).toContain('[REDACTED:EMAIL]');
     });
