@@ -43,7 +43,7 @@ describe('UsersService', () => {
     });
 
     describe('getSettings()', () => {
-        it('returns defaults (MANUAL_REVIEW + groq:qwen3.6-27b + vision + no key) when the user does not exist yet', async () => {
+        it('returns defaults (MANUAL_REVIEW + groq:compound-mini + local-ocr + no key) when the user does not exist yet', async () => {
             const prisma = makePrismaMock(null);
             const service = new UsersService(prisma, encryptionService);
 
@@ -51,8 +51,8 @@ describe('UsersService', () => {
 
             expect(settings).toEqual({
                 planApprovalMode: 'MANUAL_REVIEW',
-                modelKey: 'groq:qwen3.6-27b',
-                processingMode: 'vision',
+                modelKey: 'groq:compound-mini',
+                processingMode: 'local-ocr',
                 hasApiKey: false,
             });
         });
@@ -74,8 +74,8 @@ describe('UsersService', () => {
         it('reports hasApiKey=true but never returns the encrypted value itself', async () => {
             const prisma = makePrismaMock({
                 planApprovalMode: 'MANUAL_REVIEW',
-                modelKey: 'groq:qwen3.6-27b',
-                processingMode: 'vision',
+                modelKey: 'groq:compound-mini',
+                processingMode: 'local-ocr',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
             });
             const service = new UsersService(prisma, encryptionService);
@@ -99,15 +99,15 @@ describe('UsersService', () => {
                 expect.objectContaining({
                     create: expect.objectContaining({
                         planApprovalMode: 'AUTO_APPROVE',
-                        modelKey: 'groq:qwen3.6-27b', // untouched field defaults, doesn't come back as undefined
-                        processingMode: 'vision',
+                        modelKey: 'groq:compound-mini', // untouched field defaults, doesn't come back as undefined
+                        processingMode: 'local-ocr',
                     }),
                 }),
             );
         });
 
         it('updates only the field actually provided, leaving the others untouched', async () => {
-            const prisma = makePrismaMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'groq:qwen3.6-27b', processingMode: 'vision' });
+            const prisma = makePrismaMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'groq:compound-mini', processingMode: 'vision' });
             const service = new UsersService(prisma, encryptionService);
 
             await service.updateSettings('existing-user', { modelKey: 'anthropic:claude-3-5-sonnet' });
@@ -152,8 +152,8 @@ describe('UsersService', () => {
 
                 expect(result).toEqual({
                     planApprovalMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:qwen3.6-27b',
-                    processingMode: 'vision',
+                    modelKey: 'groq:compound-mini',
+                    processingMode: 'local-ocr',
                     updatedAt: expect.any(Date),
                     hasApiKey: true,
                 });
@@ -162,7 +162,7 @@ describe('UsersService', () => {
             it('clears a saved key when apiKey is an empty string', async () => {
                 const prisma = makePrismaMock({
                     planApprovalMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:qwen3.6-27b',
+                    modelKey: 'groq:compound-mini',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
                 const service = new UsersService(prisma, encryptionService);
@@ -178,7 +178,7 @@ describe('UsersService', () => {
             it('leaves a saved key untouched when apiKey is omitted entirely', async () => {
                 const prisma = makePrismaMock({
                     planApprovalMode: 'MANUAL_REVIEW',
-                    modelKey: 'groq:qwen3.6-27b',
+                    modelKey: 'groq:compound-mini',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
                 const service = new UsersService(prisma, encryptionService);
