@@ -1,9 +1,10 @@
 import { Injectable, Logger, Optional, UnsupportedMediaTypeException, HttpException, HttpStatus } from '@nestjs/common';
 import { generateObject } from 'ai';
+import { z } from 'zod';
 import { PDFParse } from 'pdf-parse';
 import { ComplianceService } from '../compliance/compliance.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { type Invoice, type InvoiceConfidence, ExtractionResponseSchema } from '@opp/shared';
+import type { Invoice, InvoiceConfidence, Receipt, ReceiptConfidence, Resume, ResumeConfidence } from '@opp/shared';
 import {
     DEFAULT_MODEL_KEY,
     DEFAULT_PROCESSING_MODE,
@@ -13,6 +14,13 @@ import {
     type ModelKey,
     type ProcessingMode,
 } from './model-registry';
+import {
+    DEFAULT_DOCUMENT_TYPE,
+    DOCUMENT_TYPE_KEYS,
+    getDocumentTypeDescriptor,
+    isDocumentTypeKey,
+    type DocumentTypeKey,
+} from './document-type-registry';
 import { OcrService } from './ocr.service';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -23,6 +31,9 @@ export interface ProcessedFile {
     sizeBytes: number;
 }
 
+export type ExtractedData = Invoice | Receipt | Resume;
+export type ExtractedConfidence = InvoiceConfidence | ReceiptConfidence | ResumeConfidence;
+
 export interface ExtractionResult {
     /** Original file info (omitted if only text was pasted) */
     file?: ProcessedFile;
@@ -32,8 +43,10 @@ export interface ExtractionResult {
     imagePiiDetected: boolean;
     /** True when an image/scanned PDF page was read via local OCR instead of a vision model — see model-registry.ts's ProcessingMode. */
     ocrUsed: boolean;
-    extractedInvoice: Invoice;
-    confidence: InvoiceConfidence;
+    /** Which registry entry (document-type-registry.ts) was used — either the caller's override or the auto-classified type. */
+    documentType: DocumentTypeKey;
+    extractedData: ExtractedData;
+    confidence: ExtractedConfidence;
     avgConfidence: number;
     processedAt: string;
     processingTimeMs: number;
@@ -106,6 +119,9 @@ export class ExtractionService {
      * @param requestedProcessingMode - Per-request override of how images/scanned
      *   PDFs get read ('vision' or 'local-ocr'). Falls back to this instance's
      *   configured default when omitted or unrecognised.
+     * @param requestedDocumentType - Per-request override of which document-type
+     *   registry entry to extract with (see document-type-registry.ts). Omitted
+     *   or 'auto' triggers classification against the model instead.
      * @returns A fully structured ExtractionResult.
      */
     async processFile(
@@ -114,6 +130,7 @@ export class ExtractionService {
         requestedModelKey?: string,
         apiKeyOverride?: string,
         requestedProcessingMode?: string,
+        requestedDocumentType?: string,
     ): Promise<ExtractionResult> {
         const startTime = Date.now();
 
@@ -222,12 +239,28 @@ export class ExtractionService {
             );
         }
 
-        let extractedInvoice: Invoice;
-        let confidence: InvoiceConfidence;
+        // Step 3 — Resolve which document-type registry entry to extract with.
+        // An explicit, recognised override skips classification entirely; otherwise
+        // classify against the same (already-masked) text/images gathered above —
+        // no second file read, no re-running PII masking.
+        let documentType: DocumentTypeKey;
+        if (isDocumentTypeKey(requestedDocumentType)) {
+            documentType = requestedDocumentType;
+        } else {
+            try {
+                documentType = await this.classifyDocumentType(maskedText, mimeTypeToPass, buffersToPass, modelKey, apiKeyOverride);
+            } catch (error) {
+                this.logger.warn(`Document-type classification failed, defaulting to '${DEFAULT_DOCUMENT_TYPE}': ${error instanceof Error ? error.message : 'Unknown error'}`);
+                documentType = DEFAULT_DOCUMENT_TYPE;
+            }
+        }
+
+        let extractedData: ExtractedData;
+        let confidence: ExtractedConfidence;
         let imagePiiDetected = false;
         try {
-            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey, apiKeyOverride);
-            extractedInvoice = modelResult.invoice;
+            const modelResult = await this.callModel(maskedText, mimeTypeToPass, buffersToPass, modelKey, documentType, apiKeyOverride);
+            extractedData = modelResult.data;
             // OCR can introduce reading errors the downstream model has no way to know
             // about — it only sees the (possibly already-wrong) text. Cap confidence
             // accordingly rather than letting a garbled OCR pass produce a false "1.0,
@@ -246,6 +279,7 @@ export class ExtractionService {
             await this.prisma.extractionLog.create({
                 data: {
                     sourceType,
+                    documentType,
                     originalFileName: file?.originalname ?? null,
                     fileSizeBytes: file?.size ?? null,
                     piiDetected,
@@ -274,6 +308,7 @@ export class ExtractionService {
         const log = await this.prisma.extractionLog.create({
             data: {
                 sourceType,
+                documentType,
                 originalFileName: file?.originalname ?? null,
                 fileSizeBytes: file?.size ?? null,
                 piiDetected,
@@ -297,7 +332,8 @@ export class ExtractionService {
             piiDetected,
             imagePiiDetected,
             ocrUsed,
-            extractedInvoice,
+            documentType,
+            extractedData,
             confidence,
             avgConfidence,
             processedAt: new Date().toISOString(),
@@ -325,7 +361,7 @@ export class ExtractionService {
      *   Tesseract confidence ≥ 50  → cap at 0.6 (partially reliable)
      *   otherwise                 → cap at 0.4 (weak signal)
      */
-    private capConfidenceForOcr(confidence: InvoiceConfidence, ocrConfidences: number[]): InvoiceConfidence {
+    private capConfidenceForOcr<C extends ExtractedConfidence>(confidence: C, ocrConfidences: number[]): C {
         if (ocrConfidences.length === 0) {
             return confidence;
         }
@@ -337,7 +373,7 @@ export class ExtractionService {
         for (const [field, value] of Object.entries(confidence)) {
             capped[field] = typeof value === 'number' ? Math.min(value, ceiling) : value;
         }
-        return capped as unknown as InvoiceConfidence;
+        return capped as unknown as C;
     }
 
     /**
@@ -407,80 +443,83 @@ export class ExtractionService {
     }
 
     /**
+     * Builds the `content` array of a single user message: a lead-in prompt,
+     * the sanitised document text (if any), and every image buffer (if any).
+     * Shared by both `classifyDocumentType()` and `callModel()` so the two
+     * model calls always see identical document content.
+     */
+    private buildContentBlocks(promptText: string, sanitisedText: string, mimeType: string, buffers: Buffer[] | undefined): any[] {
+        const content: any[] = [{ type: 'text', text: promptText }];
+
+        if (sanitisedText) {
+            content.push({ type: 'text', text: `\n\nDocument text:\n${sanitisedText}` });
+        }
+
+        for (const buffer of buffers ?? []) {
+            content.push({ type: 'image', image: buffer, mimeType });
+        }
+
+        return content;
+    }
+
+    /**
+     * Classifies which document-type registry entry (see document-type-registry.ts)
+     * best matches the document, using a cheap `generateObject()` call against the
+     * same sanitised text/images `callModel()` will use — no second file read.
+     */
+    private async classifyDocumentType(
+        sanitisedText: string,
+        mimeType: string,
+        buffers: Buffer[] | undefined,
+        modelKey: ModelKey,
+        apiKeyOverride?: string,
+    ): Promise<DocumentTypeKey> {
+        const prompt = `Classify this document into exactly one of the following types: ${DOCUMENT_TYPE_KEYS.join(', ')}.
+Base your answer only on the document content provided below.`;
+
+        const { object } = await generateObject({
+            model: resolveModel(modelKey, apiKeyOverride),
+            schema: z.object({ documentType: z.enum(DOCUMENT_TYPE_KEYS as [DocumentTypeKey, ...DocumentTypeKey[]]) }),
+            messages: [{ role: 'user', content: this.buildContentBlocks(prompt, sanitisedText, mimeType, buffers) }],
+        });
+
+        return object.documentType;
+    }
+
+    /**
      * Sends the sanitised text and/or image buffers to the configured model
-     * (resolved via the model registry) and extracts invoice data alongside a
-     * per-field confidence score (0–1) and an image-PII flag.
+     * (resolved via the model registry) and extracts data for the given
+     * document type alongside a per-field confidence score (0–1) and an
+     * image-PII flag.
      *
      * Uses `generateObject()` so the model's output is validated directly against
-     * `ExtractionResponseSchema` — no manual JSON.parse, no hand-written catch for
-     * malformed responses. Schema validation failures propagate as-is and are caught
-     * by the outer try/catch in `processFile()`.
+     * the resolved document-type's schema — no manual JSON.parse, no hand-written
+     * catch for malformed responses. Schema validation failures propagate as-is
+     * and are caught by the outer try/catch in `processFile()`.
      */
     private async callModel(
         sanitisedText: string,
         mimeType: string,
         buffers: Buffer[] | undefined,
         modelKey: ModelKey,
+        documentType: DocumentTypeKey,
         apiKeyOverride?: string,
-    ): Promise<{ invoice: Invoice; confidence: InvoiceConfidence; imagePiiDetected: boolean }> {
-        const messages: any[] = [
-            {
-                role: 'user',
-                content: [
-                    {
-                        type: 'text',
-                        text: `You are an invoice processing assistant. Extract the invoice data from the document and populate every field you can find.
+    ): Promise<{ data: ExtractedData; confidence: ExtractedConfidence; imagePiiDetected: boolean }> {
+        const descriptor = getDocumentTypeDescriptor(documentType);
 
-For any field you cannot locate in the document, set it to null.
-
-CONFIDENCE SCORING — use ONLY these six exact values for every confidence field, nothing in between:
-
-1.0 — The exact value is explicitly printed/written in the document. You read it directly with no interpretation needed.
-0.8 — The value is present but required minor interpretation: e.g. handwriting, abbreviation, non-standard date format, or reconstructing a total from line items.
-0.6 — The value is partially visible or you inferred it from strong surrounding context (e.g. "Net 30" implies a due date, a logo implies a vendor name).
-0.4 — The value is not clearly stated. You estimated it from weak indirect evidence and another reader might reach a different answer.
-0.2 — You guessed. The document gives almost no reliable signal for this field.
-0.0 — The field value is null (not found), OR you have no defensible basis for the extracted value.
-
-IMPORTANT RULES:
-- You MUST use only: 0.0, 0.2, 0.4, 0.6, 0.8, or 1.0. No other values.
-- If a field is null, its confidence MUST be 0.0.
-- Fields that are commonly absent from invoices (dueDate, taxAmount, customerAddress) should realistically score lower when the document does not make them explicit.
-- Be honest. A document that is scanned, handwritten, or photographed at an angle should produce lower scores than a clean digital PDF.
-
-IMAGE PII CHECK — only relevant when one or more images were provided:
-- Set imagePiiDetected to true if the image(s) visibly show a personal email address, phone number, IBAN/bank account number, or credit/debit card number ANYWHERE in the frame — including outside the structured invoice fields (e.g. in a footer, signature, stamp, or handwritten margin note).
-- A vendor's published business contact info in a normal invoice header does not need to be flagged; use judgement for anything that reads as a private individual's personal detail rather than routine business letterhead.
-- If no image was provided at all, set imagePiiDetected to false.`
-                    }
-                ]
-            }
-        ];
-
-        if (sanitisedText) {
-            messages[0].content.push({
-                type: 'text',
-                text: `\n\nDocument text:\n${sanitisedText}`
-            });
-        }
-
-        for (const buffer of buffers ?? []) {
-            messages[0].content.push({
-                type: 'image',
-                image: buffer,
-                mimeType
-            });
-        }
-
-        const { object } = await generateObject({
+        // descriptor.schema is typed as the general z.ZodTypeAny (it varies per
+        // registry entry), which widens generateObject's inferred `object` to
+        // `unknown` — asserted back to the shape every buildResponseSchema()
+        // entry actually produces.
+        const { object } = (await generateObject({
             model: resolveModel(modelKey, apiKeyOverride),
-            schema: ExtractionResponseSchema,
-            messages,
-        });
+            schema: descriptor.schema,
+            messages: [{ role: 'user', content: this.buildContentBlocks(descriptor.prompt, sanitisedText, mimeType, buffers) }],
+        })) as { object: { data: unknown; confidence: unknown; imagePiiDetected: boolean } };
 
         return {
-            invoice: object.invoice as Invoice,
-            confidence: object.confidence as InvoiceConfidence,
+            data: object.data as ExtractedData,
+            confidence: object.confidence as ExtractedConfidence,
             // Force false when no image was actually sent — never trust the model's
             // claim about image content it was never given.
             imagePiiDetected: (buffers?.length ?? 0) > 0 && object.imagePiiDetected,
@@ -490,6 +529,11 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
     /** Lists the registry so the frontend's model picker has a single source of truth, not a hand-duplicated copy. */
     getModels() {
         return Object.entries(MODEL_REGISTRY).map(([key, descriptor]) => ({ key, ...descriptor }));
+    }
+
+    /** Lists the document-type registry so the frontend's type picker never hand-duplicates it. */
+    getDocumentTypes() {
+        return DOCUMENT_TYPE_KEYS.map((key) => ({ key, label: getDocumentTypeDescriptor(key).label }));
     }
 
     async getStats() {

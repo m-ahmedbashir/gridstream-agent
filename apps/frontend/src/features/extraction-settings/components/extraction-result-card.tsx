@@ -8,6 +8,8 @@ import { useAuth } from '@clerk/nextjs';
 import { useSaveInvoice } from '@/features/invoice-upload/use-save-invoice';
 import { IconDeviceFloppy, IconPencil, IconCheck, IconAlertTriangle } from '@tabler/icons-react';
 import type { Invoice, InvoiceConfidence } from '@opp/shared';
+import type { DocumentType, ExtractedData, ExtractedConfidence } from '@/features/invoice-upload/use-extract-invoice';
+import { DOCUMENT_UI_CONFIGS, type FieldConfig } from './document-field-configs';
 
 export interface ExtractionResultData {
   file?: File;
@@ -17,12 +19,18 @@ export interface ExtractionResultData {
     maskedText: string;
     piiDetected: boolean;
     imagePiiDetected?: boolean;
-    extractedInvoice: Invoice;
-    confidence?: InvoiceConfidence;
+    documentType: DocumentType;
+    extractedData: ExtractedData;
+    confidence?: ExtractedConfidence;
     avgConfidence?: number;
     processedAt: string;
   };
 }
+
+// ── Generic helpers ─────────────────────────────────────────────────────────
+
+type DataRecord = Record<string, unknown>;
+type ConfidenceRecord = Record<string, number | undefined>;
 
 function ConfidenceBadge({ score }: { score?: number }) {
   if (score === undefined || score === null) return null;
@@ -41,75 +49,103 @@ function ConfidenceBadge({ score }: { score?: number }) {
   );
 }
 
+function EditToggle({ editing, onToggle, disabled }: { editing: boolean; onToggle: () => void; disabled: boolean }) {
+  return editing ? (
+    <Button onClick={onToggle} disabled={disabled} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
+      <IconCheck className="w-3.5 h-3.5" />
+      Save
+    </Button>
+  ) : (
+    <Button onClick={onToggle} disabled={disabled} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
+      <IconPencil className="w-4 h-4" />
+    </Button>
+  );
+}
+
 export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
   const { userId } = useAuth();
   const { mutate: saveInvoice, isPending } = useSaveInvoice();
 
-  const initialInvoiceData = data.result.extractedInvoice;
-  const confidence = data.result.confidence;
-  const [invoice, setInvoice] = useState<Invoice>(initialInvoiceData);
-  const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(null);
+  const documentType = data.result.documentType;
+  const config = DOCUMENT_UI_CONFIGS[documentType];
+  const confidence = (data.result.confidence ?? {}) as ConfidenceRecord;
 
-  const [editingSections, setEditingSections] = useState({
-    details: false,
-    vendor: false,
-    customer: false,
-    summary: false,
-    lineItems: false
-  });
+  const [fields, setFields] = useState<DataRecord>(data.result.extractedData as DataRecord);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [editingSections, setEditingSections] = useState<Record<string, boolean>>({});
 
-  const toggleEdit = (section: keyof typeof editingSections) => {
-    setEditingSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
+  const toggleEdit = (key: string) => setEditingSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const handleSave = () => {
+    if (documentType !== 'invoice') return;
     const currentUserId = userId || (typeof window !== 'undefined' ? localStorage.getItem('userId') : null) || 'default-user';
     saveInvoice(
-        {
-            invoiceData: invoice,
-            userId: currentUserId,
-            invoiceId: savedInvoiceId || undefined,
-            fieldConfidence: confidence,
-            avgConfidence: data.result.avgConfidence,
+      {
+        invoiceData: fields as unknown as Invoice,
+        userId: currentUserId,
+        invoiceId: savedId || undefined,
+        fieldConfidence: confidence as unknown as InvoiceConfidence,
+        avgConfidence: data.result.avgConfidence,
+      },
+      {
+        onSuccess: (res) => {
+          if (res && res.id) setSavedId(res.id);
         },
-        {
-            onSuccess: (data) => {
-                if (data && data.id) {
-                    setSavedInvoiceId(data.id);
-                }
-            }
-        }
+      },
     );
   };
 
-  const handleSaveSection = (section: keyof typeof editingSections) => {
-    toggleEdit(section);
+  const handleSaveSection = (key: string) => {
+    toggleEdit(key);
     handleSave();
   };
 
-  const handleChange = (field: keyof Invoice, value: string | number) => {
-    setInvoice(prev => ({ ...prev, [field]: value }));
+  const handleChange = (key: string, value: string | number) => {
+    setFields((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleLineItemChange = (index: number, field: string, value: string | number) => {
-    setInvoice(prev => {
-        const newLineItems = [...(prev.lineItems || [])];
-        newLineItems[index] = { ...newLineItems[index], [field]: value };
-        return { ...prev, lineItems: newLineItems };
+  const handleItemChange = (sectionKey: string, index: number, field: string, value: string | number) => {
+    setFields((prev) => {
+      const items = [...((prev[sectionKey] as DataRecord[] | undefined) ?? [])];
+      items[index] = { ...items[index], [field]: value };
+      return { ...prev, [sectionKey]: items };
     });
+  };
+
+  const handleListItemChange = (sectionKey: string, index: number, value: string) => {
+    setFields((prev) => {
+      const items = [...((prev[sectionKey] as string[] | undefined) ?? [])];
+      items[index] = value;
+      return { ...prev, [sectionKey]: items };
+    });
+  };
+
+  const renderInput = (fieldConfig: FieldConfig, value: unknown, onChange: (v: string | number) => void, className: string) => {
+    if (fieldConfig.type === 'number') {
+      return (
+        <Input
+          type="number"
+          step="0.01"
+          value={(value as number) ?? 0}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className={className}
+        />
+      );
+    }
+    return <Input value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} className={className} />;
   };
 
   return (
     <Card className='overflow-hidden'>
       <CardContent className='p-0'>
         <div className='grid grid-cols-2 gap-0 min-h-screen'>
-          {/* Left Column: Invoice Image */}
+          {/* Left Column: Document Image */}
           {data.file ? (
             <div className='flex items-center justify-center bg-muted p-4'>
               <div className='w-full max-h-[90vh] flex items-center justify-center rounded-lg border bg-white overflow-hidden'>
                 <img
                   src={URL.createObjectURL(data.file)}
-                  alt='Uploaded invoice'
+                  alt='Uploaded document'
                   className='max-w-full max-h-full object-contain'
                 />
               </div>
@@ -122,11 +158,14 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
 
           {/* Right Column: Extracted Data */}
           <div className='space-y-6 p-6 overflow-y-auto max-h-[90vh] flex flex-col'>
-            
+
             {/* GLOBAL ACTIONS */}
             <div className="flex items-center justify-between pb-2 border-b">
                <div className="flex items-center gap-2">
                  <h3 className="text-lg font-semibold">Extracted Data</h3>
+                 <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-muted text-muted-foreground capitalize">
+                   {documentType}
+                 </span>
                  {data.result.avgConfidence !== undefined && (
                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
                      data.result.avgConfidence >= 0.8
@@ -139,10 +178,14 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
                    </span>
                  )}
                </div>
-               <Button onClick={handleSave} disabled={isPending} className="gap-2 shrink-0">
-                 <IconDeviceFloppy className="w-4 h-4" />
-                 {isPending ? 'Saving...' : 'Save Invoice'}
-               </Button>
+               {documentType === 'invoice' ? (
+                 <Button onClick={handleSave} disabled={isPending} className="gap-2 shrink-0">
+                   <IconDeviceFloppy className="w-4 h-4" />
+                   {isPending ? 'Saving...' : 'Save Invoice'}
+                 </Button>
+               ) : (
+                 <span className="text-xs text-muted-foreground shrink-0">Review only — saving isn&apos;t wired up for this document type yet</span>
+               )}
             </div>
 
             {data.result.imagePiiDetected && (
@@ -156,252 +199,122 @@ export function ExtractionResultCard({ data }: { data: ExtractionResultData }) {
               </div>
             )}
 
-            {/* DETAILS SECTION */}
-            <div className='space-y-4'>
-              <div className='flex items-center justify-between'>
-                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                  Invoice Details
-                </p>
-                {editingSections.details ? (
-                  <Button onClick={() => handleSaveSection('details')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
-                    <IconCheck className="w-3.5 h-3.5" />
-                    Save
-                  </Button>
-                ) : (
-                  <Button onClick={() => toggleEdit('details')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
-                    <IconPencil className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-
-              <div className='grid grid-cols-2 gap-4'>
-                <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>
-                    Invoice Number<ConfidenceBadge score={confidence?.invoiceNumber} />
-                  </p>
-                  {editingSections.details ? (
-                     <Input value={invoice.invoiceNumber || ''} onChange={(e) => handleChange('invoiceNumber', e.target.value)} className="h-8 text-sm" />
-                  ) : (
-                     <p className='text-sm font-semibold'>{invoice.invoiceNumber || '—'}</p>
-                  )}
-                </div>
-                <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>
-                    Currency<ConfidenceBadge score={confidence?.currency} />
-                  </p>
-                  {editingSections.details ? (
-                     <Input value={invoice.currency || ''} onChange={(e) => handleChange('currency', e.target.value)} className="h-8 text-sm" />
-                  ) : (
-                     <p className='text-sm font-semibold'>{invoice.currency || '—'}</p>
-                  )}
-                </div>
-                <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>
-                    Issue Date<ConfidenceBadge score={confidence?.issueDate} />
-                  </p>
-                  {editingSections.details ? (
-                     <Input value={invoice.issueDate || ''} onChange={(e) => handleChange('issueDate', e.target.value)} className="h-8 text-sm" />
-                  ) : (
-                     <p className='text-sm'>{invoice.issueDate || '—'}</p>
-                  )}
-                </div>
-                <div className='space-y-1'>
-                  <p className='text-xs font-medium text-muted-foreground'>
-                    Due Date<ConfidenceBadge score={confidence?.dueDate} />
-                  </p>
-                  {editingSections.details ? (
-                     <Input value={invoice.dueDate || ''} onChange={(e) => handleChange('dueDate', e.target.value)} className="h-8 text-sm" />
-                  ) : (
-                     <p className='text-sm'>{invoice.dueDate || '—'}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* VENDOR SECTION */}
-            <div className='border-t pt-4 space-y-4'>
-              <div className='flex items-center justify-between'>
-                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                  Vendor
-                </p>
-                {editingSections.vendor ? (
-                  <Button onClick={() => handleSaveSection('vendor')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
-                    <IconCheck className="w-3.5 h-3.5" />
-                    Save
-                  </Button>
-                ) : (
-                  <Button onClick={() => toggleEdit('vendor')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
-                    <IconPencil className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-              <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>
-                  Name<ConfidenceBadge score={confidence?.vendorName} />
-                </p>
-                {editingSections.vendor ? (
-                   <Input value={invoice.vendorName || ''} onChange={(e) => handleChange('vendorName', e.target.value)} className="h-8 text-sm" />
-                ) : (
-                   <p className="text-sm font-semibold">{invoice.vendorName || '—'}</p>
-                )}
-              </div>
-              <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>
-                  Address<ConfidenceBadge score={confidence?.vendorAddress} />
-                </p>
-                {editingSections.vendor ? (
-                   <Input value={invoice.vendorAddress || ''} onChange={(e) => handleChange('vendorAddress', e.target.value)} className="h-8 text-sm" />
-                ) : (
-                   <p className="text-sm text-muted-foreground">{invoice.vendorAddress || '—'}</p>
-                )}
-              </div>
-            </div>
-
-            {/* CUSTOMER SECTION */}
-            <div className='border-t pt-4 space-y-4'>
-              <div className='flex items-center justify-between'>
-                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                  Customer
-                </p>
-                {editingSections.customer ? (
-                  <Button onClick={() => handleSaveSection('customer')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
-                    <IconCheck className="w-3.5 h-3.5" />
-                    Save
-                  </Button>
-                ) : (
-                  <Button onClick={() => toggleEdit('customer')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
-                    <IconPencil className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-              <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>
-                  Name<ConfidenceBadge score={confidence?.customerName} />
-                </p>
-                {editingSections.customer ? (
-                   <Input value={invoice.customerName || ''} onChange={(e) => handleChange('customerName', e.target.value)} className="h-8 text-sm" />
-                ) : (
-                   <p className="text-sm font-semibold">{invoice.customerName || '—'}</p>
-                )}
-              </div>
-              <div className='space-y-1'>
-                <p className='text-xs font-medium text-muted-foreground'>
-                  Address<ConfidenceBadge score={confidence?.customerAddress} />
-                </p>
-                {editingSections.customer ? (
-                   <Input value={invoice.customerAddress || ''} onChange={(e) => handleChange('customerAddress', e.target.value)} className="h-8 text-sm" />
-                ) : (
-                   <p className="text-sm text-muted-foreground">{invoice.customerAddress || '—'}</p>
-                )}
-              </div>
-            </div>
-
-            {/* SUMMARY SECTION */}
-            <div className='border-t pt-4 space-y-3'>
-              <div className='flex items-center justify-between'>
-                <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>
-                  Summary
-                </p>
-                {editingSections.summary ? (
-                  <Button onClick={() => handleSaveSection('summary')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
-                    <IconCheck className="w-3.5 h-3.5" />
-                    Save
-                  </Button>
-                ) : (
-                  <Button onClick={() => toggleEdit('summary')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
-                    <IconPencil className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-              <div className='flex items-center justify-between gap-4'>
-                <span className='text-muted-foreground text-sm w-28 flex items-center'>
-                  Subtotal ($):<ConfidenceBadge score={confidence?.subtotal} />
-                </span>
-                {editingSections.summary ? (
-                    <Input type="number" step="0.01" value={invoice.subtotal || 0} onChange={(e) => handleChange('subtotal', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
-                ) : (
-                    <span className='text-sm font-semibold'>${invoice.subtotal}</span>
-                )}
-              </div>
-              <div className='flex items-center justify-between gap-4'>
-                <span className='text-muted-foreground text-sm w-28 flex items-center'>
-                  Tax ($):<ConfidenceBadge score={confidence?.taxAmount} />
-                </span>
-                {editingSections.summary ? (
-                    <Input type="number" step="0.01" value={invoice.taxAmount || 0} onChange={(e) => handleChange('taxAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1" />
-                ) : (
-                    <span className='text-sm font-semibold'>${invoice.taxAmount}</span>
-                )}
-              </div>
-              <div className='flex items-center justify-between gap-4 border-t pt-3'>
-                <span className='font-bold w-28 flex items-center'>
-                  Total ($):<ConfidenceBadge score={confidence?.totalAmount} />
-                </span>
-                {editingSections.summary ? (
-                    <Input type="number" step="0.01" value={invoice.totalAmount || 0} onChange={(e) => handleChange('totalAmount', parseFloat(e.target.value) || 0)} className="h-8 text-right flex-1 font-bold" />
-                ) : (
-                    <span className='font-bold'>${invoice.totalAmount}</span>
-                )}
-              </div>
-            </div>
-
-            {/* LINE ITEMS SECTION */}
-            {invoice.lineItems && invoice.lineItems.length > 0 && (
-                <div className='border-t pt-4 space-y-3 pb-8'>
+            {/* FIELD SECTIONS */}
+            {config.sections.map((section) => {
+              const editing = !!editingSections[section.key];
+              return (
+                <div key={section.key} className='border-t first:border-t-0 pt-4 first:pt-0 space-y-4'>
                   <div className='flex items-center justify-between'>
-                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center'>
-                      Line Items<ConfidenceBadge score={confidence?.lineItems} />
-                    </p>
-                    {editingSections.lineItems ? (
-                      <Button onClick={() => handleSaveSection('lineItems')} disabled={isPending} size="sm" variant="outline" className="h-7 px-2 gap-1 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-400">
-                        <IconCheck className="w-3.5 h-3.5" />
-                        Save
-                      </Button>
-                    ) : (
-                      <Button onClick={() => toggleEdit('lineItems')} disabled={isPending} size="icon" variant="ghost" className="w-6 h-6 text-muted-foreground">
-                        <IconPencil className="w-4 h-4" />
-                      </Button>
-                    )}
+                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>{section.title}</p>
+                    <EditToggle editing={editing} disabled={isPending} onToggle={() => handleSaveSection(section.key)} />
                   </div>
-
-                  <div className='space-y-3'>
-                    {invoice.lineItems.map((item, itemIdx) => (
-                      <div key={itemIdx} className='flex flex-col gap-2 rounded-lg border p-3 text-sm'>
-                        <div className='flex items-center justify-between gap-2'>
-                          <span className='text-xs text-muted-foreground w-12'>Desc:</span>
-                          {editingSections.lineItems ? (
-                              <Input value={item.description || ''} onChange={(e) => handleLineItemChange(itemIdx, 'description', e.target.value)} className="h-8 text-xs flex-1" />
-                          ) : (
-                              <span className='text-xs font-medium flex-1'>{item.description}</span>
-                          )}
-                        </div>
-                        <div className='flex items-center justify-between gap-2'>
-                          <span className='text-xs text-muted-foreground w-12'>Qty:</span>
-                          {editingSections.lineItems ? (
-                              <Input type="number" value={item.quantity || 0} onChange={(e) => handleLineItemChange(itemIdx, 'quantity', parseFloat(e.target.value) || 0)} className="h-8 text-xs w-20" />
-                          ) : (
-                              <span className='text-xs w-20'>{item.quantity}</span>
-                          )}
-                          <span className='text-xs text-muted-foreground ml-2 w-12'>Price:</span>
-                          {editingSections.lineItems ? (
-                              <Input type="number" step="0.01" value={item.unitPrice || 0} onChange={(e) => handleLineItemChange(itemIdx, 'unitPrice', parseFloat(e.target.value) || 0)} className="h-8 text-xs w-20" />
-                          ) : (
-                              <span className='text-xs w-20'>${item.unitPrice}</span>
-                          )}
-                        </div>
-                        <div className='flex items-center justify-end gap-2 border-t pt-2 mt-1'>
-                           <span className='text-xs font-semibold'>Total:</span>
-                           {editingSections.lineItems ? (
-                               <Input type="number" step="0.01" value={item.totalPrice || 0} onChange={(e) => handleLineItemChange(itemIdx, 'totalPrice', parseFloat(e.target.value) || 0)} className="h-8 w-24 text-xs font-semibold text-right" />
-                           ) : (
-                               <span className='text-xs font-semibold'>${item.totalPrice}</span>
-                           )}
-                        </div>
+                  <div className='grid grid-cols-2 gap-4'>
+                    {section.fields.map((fieldConfig) => (
+                      <div key={fieldConfig.key} className={`space-y-1 ${fieldConfig.fullWidth ? 'col-span-2' : ''}`}>
+                        <p className='text-xs font-medium text-muted-foreground'>
+                          {fieldConfig.label}
+                          <ConfidenceBadge score={confidence[fieldConfig.key]} />
+                        </p>
+                        {editing
+                          ? renderInput(fieldConfig, fields[fieldConfig.key], (v) => handleChange(fieldConfig.key, v), 'h-8 text-sm')
+                          : <p className='text-sm font-medium'>{(fields[fieldConfig.key] as string | number | null) ?? '—'}</p>}
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
+              );
+            })}
+
+            {/* SUMMARY SECTION */}
+            {config.summaryFields && (
+              <div className='border-t pt-4 space-y-3'>
+                <div className='flex items-center justify-between'>
+                  <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide'>Summary</p>
+                  <EditToggle editing={!!editingSections.summary} disabled={isPending} onToggle={() => handleSaveSection('summary')} />
+                </div>
+                {config.summaryFields.map((fieldConfig) => (
+                  <div key={fieldConfig.key} className='flex items-center justify-between gap-4'>
+                    <span className='text-muted-foreground text-sm w-28 flex items-center'>
+                      {fieldConfig.label}:<ConfidenceBadge score={confidence[fieldConfig.key]} />
+                    </span>
+                    {editingSections.summary
+                      ? renderInput(fieldConfig, fields[fieldConfig.key], (v) => handleChange(fieldConfig.key, v), 'h-8 text-right flex-1')
+                      : <span className='text-sm font-semibold'>{(fields[fieldConfig.key] as number) ?? 0}</span>}
+                  </div>
+                ))}
+                {config.totalField && (
+                  <div className='flex items-center justify-between gap-4 border-t pt-3'>
+                    <span className='font-bold w-28 flex items-center'>
+                      {config.totalField.label}:<ConfidenceBadge score={confidence[config.totalField.key]} />
+                    </span>
+                    {editingSections.summary
+                      ? renderInput(config.totalField, fields[config.totalField.key], (v) => handleChange(config.totalField!.key, v), 'h-8 text-right flex-1 font-bold')
+                      : <span className='font-bold'>{(fields[config.totalField.key] as number) ?? 0}</span>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* LIST SECTIONS (e.g. skills) */}
+            {config.listSections?.map((section) => {
+              const items = (fields[section.key] as string[] | undefined) ?? [];
+              if (items.length === 0) return null;
+              const editing = !!editingSections[section.key];
+              return (
+                <div key={section.key} className='border-t pt-4 space-y-3'>
+                  <div className='flex items-center justify-between'>
+                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center'>
+                      {section.title}<ConfidenceBadge score={confidence[section.key]} />
+                    </p>
+                    <EditToggle editing={editing} disabled={isPending} onToggle={() => handleSaveSection(section.key)} />
+                  </div>
+                  <div className='flex flex-wrap gap-2'>
+                    {items.map((item, idx) =>
+                      editing ? (
+                        <Input key={idx} value={item} onChange={(e) => handleListItemChange(section.key, idx, e.target.value)} className="h-7 text-xs w-32" />
+                      ) : (
+                        <span key={idx} className='text-xs rounded-full bg-secondary px-2.5 py-1'>{item}</span>
+                      ),
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* ITEM SECTIONS (e.g. line items, receipt items, experience, education) */}
+            {config.itemSections?.map((section) => {
+              const items = (fields[section.key] as DataRecord[] | undefined) ?? [];
+              if (items.length === 0) return null;
+              const editing = !!editingSections[section.key];
+              return (
+                <div key={section.key} className='border-t pt-4 space-y-3 pb-8'>
+                  <div className='flex items-center justify-between'>
+                    <p className='text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center'>
+                      {section.title}<ConfidenceBadge score={confidence[section.key]} />
+                    </p>
+                    <EditToggle editing={editing} disabled={isPending} onToggle={() => handleSaveSection(section.key)} />
+                  </div>
+                  <div className='space-y-3'>
+                    {items.map((item, itemIdx) => (
+                      <div key={itemIdx} className='flex flex-col gap-2 rounded-lg border p-3 text-sm'>
+                        {section.itemFields.map((fieldConfig) => (
+                          <div key={fieldConfig.key} className='flex items-center justify-between gap-2'>
+                            <span className='text-xs text-muted-foreground w-16 shrink-0'>{fieldConfig.label}:</span>
+                            {editing
+                              ? renderInput(fieldConfig, item[fieldConfig.key], (v) => handleItemChange(section.key, itemIdx, fieldConfig.key, v), 'h-8 text-xs flex-1')
+                              : (
+                                <span className={`text-xs flex-1 ${fieldConfig.key === section.totalField ? 'font-semibold text-right' : ''}`}>
+                                  {(item[fieldConfig.key] as string | number | null) ?? '—'}
+                                </span>
+                              )}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </CardContent>

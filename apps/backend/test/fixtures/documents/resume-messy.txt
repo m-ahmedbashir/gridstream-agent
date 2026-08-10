@@ -1,0 +1,28 @@
+JORDAN   T.  MERCER
+jordan.mercer.dev [at] example dot com   |   Portland, OR
+
+--- SUMMARY ---
+Backend-leaning full stack engineer, 6 yrs exp, shipped payments +
+data pipeline systems @ scale. Comfortable across the stack but
+happiest in Go/TS.
+
+SKILLS: Go, TypeScript, Node.js, PostgreSQL, Kafka, Docker, AWS (ECS/Lambda), Terraform
+
+EXPERIENCE
+----------
+Senior Software Engineer                     Northwind Analytics
+Mar 2022 - Present                            Remote
+ - led migration of the ingest pipeline off cron jobs onto Kafka,
+   cut end-to-end latency from ~40min to under 2min
+ - mentored 2 junior engineers, ran the on-call rotation
+
+Software Engineer II            Bramble Fintech          Jun 2019-Feb 2022
+  Built the internal ledger reconciliation service (Go), processed
+  ~2M transactions/day. Owned deploys via Terraform/ECS.
+
+Jr. Developer  -  Kestrel Apps   |  2017 - 2019 (Chicago, IL)
+
+
+EDUCATION
+B.S. Computer Science -- University of Illinois Urbana-Champaign
+   2013 - 2017

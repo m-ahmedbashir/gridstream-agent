@@ -2,6 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { Invoice, InvoiceConfidence } from '@opp/shared';
 
+/**
+ * Backs the `/invoices` API (still invoice-specific — the chat assistant's
+ * getInvoices/deleteInvoice HITL tools and the review card's save flow all
+ * depend on this flat shape). Underneath, storage is the generic `Document`
+ * table (documentType + a JSON `data` column, shared with receipts/resumes
+ * extracted via the document-type registry) — `flatten()` spreads `data`
+ * back onto the row so existing consumers see the same shape as before.
+ */
 @Injectable()
 export class InvoicesService {
   constructor(private prisma: PrismaService) {}
@@ -14,31 +22,22 @@ export class InvoicesService {
     avgConfidence?: number,
   ) {
     const dataPayload = {
-        invoiceNumber: invoiceData.invoiceNumber,
-        issueDate: invoiceData.issueDate,
-        dueDate: invoiceData.dueDate,
-        vendorName: invoiceData.vendorName,
-        vendorAddress: invoiceData.vendorAddress,
-        customerName: invoiceData.customerName,
-        customerAddress: invoiceData.customerAddress,
-        subtotal: invoiceData.subtotal,
-        taxAmount: invoiceData.taxAmount,
-        totalAmount: invoiceData.totalAmount,
-        currency: invoiceData.currency,
-        lineItems: invoiceData.lineItems as any,
+        documentType: 'invoice',
+        data: invoiceData as any,
         fieldConfidence: fieldConfidence ? (fieldConfidence as any) : undefined,
         avgConfidence: avgConfidence ?? undefined,
         status: 'APPROVED',
     };
 
     if (invoiceId) {
-      return this.prisma.invoice.update({
+      const updated = await this.prisma.document.update({
         where: { id: invoiceId },
         data: dataPayload,
       });
+      return this.flatten(updated);
     }
 
-    return this.prisma.invoice.create({
+    const created = await this.prisma.document.create({
       data: {
         user: {
           connectOrCreate: {
@@ -49,26 +48,38 @@ export class InvoicesService {
         ...dataPayload
       },
     });
+    return this.flatten(created);
   }
 
   async getInvoicesByUser(userId: string) {
-    return this.prisma.invoice.findMany({
+    const documents = await this.prisma.document.findMany({
       where: {
-        user: { clerkId: userId }
+        user: { clerkId: userId },
+        documentType: 'invoice',
       },
       orderBy: { createdAt: 'desc' }
     });
+    return documents.map((document) => this.flatten(document));
   }
 
   async deleteInvoiceById(invoiceId: string) {
-    return this.prisma.invoice.delete({
+    return this.prisma.document.delete({
       where: { id: invoiceId },
     });
   }
 
   async deleteInvoiceByNumber(invoiceNumber: string) {
-    return this.prisma.invoice.deleteMany({
-      where: { invoiceNumber },
+    return this.prisma.document.deleteMany({
+      where: {
+        documentType: 'invoice',
+        data: { path: ['invoiceNumber'], equals: invoiceNumber },
+      },
     });
+  }
+
+  /** Spreads the generic `data` JSON column back onto the row so callers see the pre-migration flat Invoice shape. */
+  private flatten(document: { data: unknown } & Record<string, unknown>) {
+    const { data, ...rest } = document;
+    return { ...rest, ...(data as Record<string, unknown>) };
   }
 }
