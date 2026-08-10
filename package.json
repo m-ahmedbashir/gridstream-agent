@@ -1,16 +1,17 @@
 {
-  "name": "opp-agent",
+  "name": "maintain-agent",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
-    "dev:frontend": "pnpm --filter frontend dev",
-    "dev:backend": "pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter @maintain/frontend dev",
+    "dev:backend": "pnpm --filter @maintain/backend dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "db:seed": "pnpm --filter @maintain/backend db:seed"
   },
   "keywords": [],
   "author": "Ahmed Bashir",

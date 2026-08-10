@@ -7,7 +7,7 @@ import {
     ResumeSchema,
     ResumeConfidenceSchema,
     buildResponseSchema,
-} from '@opp/shared';
+} from '@maintain/shared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

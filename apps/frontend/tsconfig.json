@@ -25,7 +25,7 @@
       "~/*": [
         "./public/*"
       ],
-      "@opp/shared": [
+      "@maintain/shared": [
         "../../packages/shared/index.ts"
       ],
     },

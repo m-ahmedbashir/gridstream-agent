@@ -11,15 +11,17 @@ datasource db {
 }
 
 model User {
-  id               String   @id @default(cuid())
-  clerkId          String   @unique
-  extractionMode   String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
-  modelKey         String   @default("groq:llama-4-scout") // key into MODEL_REGISTRY (apps/backend/src/modules/extraction/model-registry.ts)
-  encryptedApiKey  String?  // AES-256-GCM ciphertext (see common/crypto/) — NEVER the plaintext key. Null = use the app's shared key.
-  processingMode   String   @default("vision") // "vision" | "local-ocr" — how images/scanned PDFs get read
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  documents        Document[]
+  id                String   @id @default(cuid())
+  clerkId           String   @unique
+  extractionMode    String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
+  planApprovalMode  String   @default("MANUAL_REVIEW") // "AUTO_APPROVE" | "MANUAL_REVIEW"
+  modelKey          String   @default("groq:llama-4-scout") // key into MODEL_REGISTRY (apps/backend/src/modules/extraction/model-registry.ts)
+  encryptedApiKey   String?  // AES-256-GCM ciphertext (see common/crypto/) — NEVER the plaintext key. Null = use the app's shared key.
+  processingMode    String   @default("vision") // "vision" | "local-ocr" — how images/scanned PDFs get read
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  documents         Document[]
+  machineProfiles   MachineProfile[]
 }
 
 model Document {
@@ -30,7 +32,7 @@ model Document {
   // Which document-type registry entry (see extraction/document-type-registry.ts) this was extracted with.
   documentType     String   // "invoice" | "receipt" | "resume"
 
-  // The type-specific extracted fields (shape matches that type's Zod schema in @opp/shared).
+  // The type-specific extracted fields (shape matches that type's Zod schema in @maintain/shared).
   data             Json
 
   // AI confidence — stored alongside the extracted data
@@ -74,4 +76,63 @@ model ExtractionLog {
   @@index([createdAt])
   @@index([sourceType])
   @@index([success])
+}
+
+model MachineProfile {
+  id                  String   @id @default(uuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  machineId           String   @unique
+  machineType         String
+  manufacturer        String
+  yearInstalled       Int
+  runtimeHours        Int
+  lastServiceDate     DateTime?
+  observedIssues      String[]
+  energyConsumptionKwh Int?
+  criticality         String
+  location            String?
+  extractedAt         DateTime @default(now())
+  rawText             String? // stored original text for audit
+  plans               Plan[]
+
+  @@index([userId])
+  @@index([machineType])
+}
+
+model Measure {
+  id                    String   @id @default(uuid())
+  category              String
+  title                 String
+  titleDe               String
+  description           String
+  applicableMachineTypes String[]
+  minRuntimeHours       Int?
+  typicalInvestment     Int
+  typicalAnnualSavings  Int
+  paybackMonths         Int
+  co2ReductionKg        Int?
+  tasks                 Json
+}
+
+model Plan {
+  id                  String   @id @default(uuid())
+  machineProfileId    String
+  machineProfile      MachineProfile @relation(fields: [machineProfileId], references: [id], onDelete: Cascade)
+  status              String   @default("draft")
+  confidence          Float
+  totalInvestment     Int
+  totalAnnualSavings  Int
+  paybackMonths       Int
+  totalDowntimeHours  Int?
+  totalCo2ReductionKg Int?
+  measures            Json
+  executiveSummary    String
+  executiveSummaryEn  String?
+  generatedAt         DateTime @default(now())
+  approvedAt          DateTime?
+  approvedBy          String?
+
+  @@index([machineProfileId])
+  @@index([status])
 }

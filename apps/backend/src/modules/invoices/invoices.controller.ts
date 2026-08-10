@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, Param, Delete } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
-import { Invoice, InvoiceConfidence } from '@opp/shared';
+import { Invoice, InvoiceConfidence } from '@maintain/shared';
 
 @Controller('invoices')
 export class InvoicesController {

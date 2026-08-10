@@ -31,7 +31,7 @@ This is a quality/correctness improvement to something that already works, not a
 **Phase 5: Complete.**
 
 ### What was done:
-- `@opp/shared` — `InvoiceSchema` fields made nullable (truthful types), `InvoiceConfidenceSchema` derived from Zod (replaces hand-written type), `ExtractionResponseSchema` added as the combined wrapper for `generateObject`.
+- `@maintain/shared` — `InvoiceSchema` fields made nullable (truthful types), `InvoiceConfidenceSchema` derived from Zod (replaces hand-written type), `ExtractionResponseSchema` added as the combined wrapper for `generateObject`.
 - `extraction.service.ts` — `generateText` + `JSON.parse` replaced with `generateObject(ExtractionResponseSchema)`. Prompt simplified (schema describes structure; semantic rubric and image-PII guidance kept). Manual parse error path and `HttpException('Failed to parse AI response')` removed — Zod surfaces validation errors itself.
 - `extraction.service.spec.ts` — All 27 tests updated to mock `generateObject` (returning `{ object: {...} }`) and pass green.
 - `pnpm run typecheck` — 4 tasks, 0 errors.

@@ -30,7 +30,32 @@ export const navItems: NavItem[] = [
     items: []
   },
   {
-    title: 'My Assistant',
+    title: 'Maintenance',
+    url: '/dashboard/maintenance',
+    icon: 'settings',
+    shortcut: ['m', 'm'],
+    isActive: false,
+    items: [
+      {
+        title: 'Upload Report',
+        url: '/dashboard/maintenance',
+      },
+      {
+        title: 'Measures',
+        url: '/dashboard/maintenance/measures',
+      },
+      {
+        title: 'Plan',
+        url: '/dashboard/maintenance/plan',
+      },
+      {
+        title: 'History',
+        url: '/dashboard/maintenance/history',
+      }
+    ]
+  },
+  {
+    title: 'AI Assistant',
     url: '/dashboard/chat',
     icon: 'robot',
     shortcut: ['c', 'c'],

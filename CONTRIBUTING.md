@@ -1,4 +1,4 @@
-# Contributing to Unstructured-to-Ops Action Agent
+# Contributing to maintain-agent
 
 Thanks for considering a contribution. This is a solo-maintained project, but it's built and documented as if it weren't — issues, PRs, and questions are genuinely welcome.
 
@@ -26,7 +26,7 @@ A PR that fails either of these won't be merged as-is — please get them green 
 
 ## What to work on
 
-- Check [open issues](https://github.com/m-ahmedbashir/opp-agent/issues) first. If nothing's filed for what you want to do, open one before sending a large PR, so we can agree on approach before you invest the time.
+- Check [open issues](https://github.com/m-ahmedbashir/maintain-agent/issues) first. If nothing's filed for what you want to do, open one before sending a large PR, so we can agree on approach before you invest the time.
 - The README's [Roadmap](README.md#-roadmap) section lists concrete, scoped next steps — each one there is deliberately sized to be a single PR, not an epic.
 - **Good first issues** (small, well-defined, verified-broken so you won't waste time confirming the bug first):
   - **Fix frontend linting.** `apps/frontend`'s `lint` script is `next lint`, which no longer exists as of Next.js 16 (`next --help` lists no `lint` subcommand). Running `eslint` directly against the legacy `.eslintrc.json` also fails (`TypeError: Converting circular structure to JSON`, from the `next/core-web-vitals` config under the installed `eslint@8.48.0` + `@eslint/eslintrc@2.1.4`). Needs a real migration to ESLint flat config, not a one-line patch.

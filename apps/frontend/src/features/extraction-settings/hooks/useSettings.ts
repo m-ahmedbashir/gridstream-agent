@@ -4,10 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/nextjs';
 
 export type ExtractionMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
+export type PlanApprovalMode = 'AUTO_APPROVE' | 'MANUAL_REVIEW';
 export type ProcessingMode = 'vision' | 'local-ocr';
 
 export interface UserSettings {
   extractionMode: ExtractionMode;
+  planApprovalMode: PlanApprovalMode;
   modelKey: string;
   processingMode: ProcessingMode;
   /** Whether a BYOK provider key is saved — never the key itself, which is write-only once saved. */
@@ -16,6 +18,7 @@ export interface UserSettings {
 
 export interface SettingsUpdate {
   extractionMode?: ExtractionMode;
+  planApprovalMode?: PlanApprovalMode;
   modelKey?: string;
   processingMode?: ProcessingMode;
   /** Plaintext key to save (sent once, over HTTPS in production, encrypted server-side before storage). Pass '' to remove a saved key. */

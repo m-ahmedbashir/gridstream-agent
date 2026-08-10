@@ -94,7 +94,7 @@ Future additions (not in MVP):
 | Frontend | Next.js 16, Tailwind CSS, shadcn/ui, Clerk auth |
 | Backend | NestJS, Vercel AI SDK |
 | AI Model | Groq llama-4-scout-17b-16e-instruct (free tier) |
-| Schema Validation | Zod (shared `@opp/shared` package) |
+| Schema Validation | Zod (shared `@maintain/shared` package) |
 | Deployment | Vercel (frontend) + Railway (backend) |
 
 ---
