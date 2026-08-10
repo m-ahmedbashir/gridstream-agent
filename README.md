@@ -101,7 +101,7 @@ maintain-agent/
 
 ## 🛠 Tech Stack
 
-- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — Groq (`compound-mini` free text default, with OpenRouter/Gemma/Nemotron free-vision options), OpenAI (`gpt-4o` for planning), and Anthropic wired in and ready to select
+- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — OpenRouter (`nvidia/nemotron-nano-12b-v2-vl:free` free-vision default), Groq (`compound-mini` free text), OpenAI (`gpt-4o` for planning), and Anthropic wired in and ready to select
 - **Validation:** Zod, `nestjs-zod`
 - **Document parsing:** `pdf-parse` (PDF text-layer extraction + `@napi-rs/canvas` rasterization fallback)
 - **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`

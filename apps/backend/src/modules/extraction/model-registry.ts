@@ -5,7 +5,7 @@ import type { LanguageModel } from 'ai';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ModelProviderName = 'groq' | 'openai' | 'anthropic';
+export type ModelProviderName = 'groq' | 'openai' | 'anthropic' | 'openrouter';
 
 export interface ModelDescriptor {
     provider: ModelProviderName;
@@ -38,10 +38,21 @@ export const MODEL_REGISTRY = {
         modelId: 'groq/compound',
         supportsVision: false,
     },
-    // Groq vision model (not free, but the only vision-capable option on this key).
+    // Groq vision model (paid).
     'groq:qwen3.6-27b': {
         provider: 'groq',
         modelId: 'qwen/qwen3.6-27b',
+        supportsVision: true,
+    },
+    // OpenRouter free vision models (no credit card required).
+    'openrouter:nemotron-nano-12b-v2-vl-free': {
+        provider: 'openrouter',
+        modelId: 'nvidia/nemotron-nano-12b-v2-vl:free',
+        supportsVision: true,
+    },
+    'openrouter:gemma-4-26b-a4b-it-free': {
+        provider: 'openrouter',
+        modelId: 'google/gemma-4-26b-a4b-it:free',
         supportsVision: true,
     },
     // Paid alternatives.
@@ -59,8 +70,8 @@ export const MODEL_REGISTRY = {
 
 export type ModelKey = keyof typeof MODEL_REGISTRY;
 
-/** The model used when nothing else is configured — free on Groq but text-only, so local OCR is the default processing mode. */
-export const DEFAULT_MODEL_KEY: ModelKey = 'groq:compound-mini';
+/** The model used when nothing else is configured — free OpenRouter vision model. */
+export const DEFAULT_MODEL_KEY: ModelKey = 'openrouter:nemotron-nano-12b-v2-vl-free';
 
 export function getModelDescriptor(key: ModelKey): ModelDescriptor {
     return MODEL_REGISTRY[key];
@@ -85,6 +96,11 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
             return createOpenAI({ apiKey: apiKeyOverride ?? process.env.OPENAI_API_KEY })(descriptor.modelId);
         case 'anthropic':
             return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
+        case 'openrouter':
+            return createOpenAI({
+                baseURL: 'https://openrouter.ai/api/v1',
+                apiKey: apiKeyOverride ?? process.env.OPENROUTER_API_KEY,
+            })(descriptor.modelId);
     }
 }
 
@@ -93,18 +109,18 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
 /**
  * How images and scanned PDF pages get read:
  *  - 'vision': sent as image content parts to a vision-capable model.
- *    Better on messy/handwritten/angled scans, but requires a paid vision
- *    model like qwen/qwen3.6-27b.
+ *    Better on messy/handwritten/angled scans; default because the default
+ *    OpenRouter model is vision-capable and free.
  *  - 'local-ocr': read locally via Tesseract before anything leaves the
  *    server, so the resulting text goes through the same PII-masking
- *    pipeline that already protects typed/pasted text. Default because the
- *    free Groq tier (compound / compound-mini) is text-only.
+ *    pipeline that already protects typed/pasted text. Use this to switch
+ *    to a free text-only Groq model (compound / compound-mini).
  */
 export type ProcessingMode = 'vision' | 'local-ocr';
 
 export const PROCESSING_MODES: readonly ProcessingMode[] = ['vision', 'local-ocr'];
 
-export const DEFAULT_PROCESSING_MODE: ProcessingMode = 'local-ocr';
+export const DEFAULT_PROCESSING_MODE: ProcessingMode = 'vision';
 
 export function isProcessingMode(value: unknown): value is ProcessingMode {
     return typeof value === 'string' && (PROCESSING_MODES as readonly string[]).includes(value);
