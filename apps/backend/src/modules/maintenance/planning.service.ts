@@ -27,7 +27,7 @@ export class PlanningService {
         profile: MachineProfile,
         measures: Measure[],
         userId: string,
-        modelKey: ModelKey = 'openai:gpt-4o',
+        modelKey: ModelKey = 'openrouter:nemotron-nano-12b-v2-vl-free',
         apiKeyOverride?: string,
     ): Promise<ProjectPlan> {
         const now = new Date().toISOString();
