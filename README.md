@@ -12,6 +12,7 @@
 ## Contents
 
 - [Overview](#overview)
+- [How It Works](#-how-it-works)
 - [Features](#-features)
 - [Architecture](#-architecture)
 - [Tech Stack](#-tech-stack)
@@ -30,6 +31,45 @@ Factories still review maintenance reports and plan retrofits in spreadsheets �
 Upload a German maintenance report (PDF, image, or pasted text), and the agent uses the **Vercel AI SDK** with a provider-agnostic model registry to extract a machine profile, query a curated measure database, and produce a Zod-validated project plan with German executive summaries for plant managers. Every field carries a six-anchor confidence score, and high-value plans stay in draft until a human approves them.
 
 The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, maintenance dashboard, chat assistant) and a **NestJS** backend (Prisma/PostgreSQL, extraction and planning pipelines, PII compliance masking). Every push and PR runs a real CI pipeline (typecheck + test across all workspaces) — the badge above reflects the actual current state of `main`, not an aspiration.
+
+---
+
+## 🔄 How It Works
+
+What you actually do, and what you get back, from "I have a PDF" to "the retrofit is approved":
+
+```mermaid
+flowchart TD
+    A["📄 Upload a report<br/>PDF, photo/scan, CSV, JSON,<br/>or just paste the text"]
+    --> B["🕵️ Your data gets protected<br/>Emails, phone numbers, IBANs,<br/>card numbers auto-redacted"]
+    --> C["🏭 You get a machine profile card<br/>Type, manufacturer, runtime, issues —<br/>each field flagged with confidence"]
+    --> D["🔎 Click 'Find Measures'<br/>Top 5 relevant fixes/upgrades,<br/>fastest payback first"]
+    --> E["✅ Tick the ones you want<br/>and generate a plan"]
+    --> F["💶 Plan comes back<br/>Cost, savings, payback time, CO2 —<br/>plus a plain-language summary"]
+    --> G{"Auto-approve rule met?<br/>(small + high-confidence)"}
+    G -->|"Yes"| H["🟢 Approved automatically"]
+    G -->|"No — default"| I["🟡 Waiting in your review queue"]
+    I --> J["👤 You click Approve or Reject"]
+    J --> H
+    J --> K["🔴 Rejected"]
+    H --> L["🗂️ Saved to your Plan History"]
+    K --> L
+
+    style A fill:#1d4ed8,color:#fff
+    style B fill:#7c3aed,color:#fff
+    style C fill:#7c3aed,color:#fff
+    style D fill:#0891b2,color:#fff
+    style E fill:#0891b2,color:#fff
+    style F fill:#0891b2,color:#fff
+    style G fill:#b45309,color:#fff
+    style H fill:#15803d,color:#fff
+    style I fill:#b45309,color:#fff
+    style J fill:#b45309,color:#fff
+    style K fill:#b91c1c,color:#fff
+    style L fill:#334155,color:#fff
+```
+
+A couple of things that don't show up in the boxes above: you can bring your own Groq/OpenAI/Anthropic API key in Settings instead of using the app's shared free one (encrypted at rest, never shown back to you), and there's a chat assistant on the Chat page if you'd rather just ask questions about a machine or plan instead of clicking through the flow above.
 
 ---
 
