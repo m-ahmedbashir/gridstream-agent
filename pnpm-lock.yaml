@@ -147,6 +147,9 @@ importers:
       '@ai-sdk/groq':
         specifier: ^3.0.35
         version: 3.0.35(zod@4.3.6)
+      '@ai-sdk/openai':
+        specifier: ^3.0.84
+        version: 3.0.84(zod@4.3.6)
       '@ai-sdk/react':
         specifier: ^3.0.170
         version: 3.0.170(react@19.2.4)(zod@4.3.6)

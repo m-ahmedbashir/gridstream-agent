@@ -2,10 +2,10 @@ import { PlanningService } from './planning.service';
 import type { MachineProfile, Measure } from '@maintain/shared';
 
 jest.mock('ai', () => ({
-    generateObject: jest.fn(),
+    generateText: jest.fn(),
 }));
 
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 
 describe('PlanningService', () => {
     let service: PlanningService;
@@ -62,20 +62,22 @@ describe('PlanningService', () => {
     }
 
     it('validates the generated plan against ProjectPlanSchema', async () => {
-        (generateObject as jest.Mock).mockResolvedValue({
-            object: {
+        (generateText as jest.Mock).mockResolvedValue({
+            text: JSON.stringify({
                 planId: 'plan-ignored',
                 machineId: 'ignored',
                 status: 'draft',
                 totalInvestment: 0,
                 totalAnnualSavings: 0,
                 paybackMonths: 0,
+                totalDowntimeHours: 0,
+                totalCo2ReductionKg: 0,
                 confidence: 0,
                 measures: [],
                 executiveSummary: 'German summary',
                 executiveSummaryEn: 'English summary',
                 generatedAt: new Date().toISOString(),
-            },
+            }),
         });
 
         const profile = makeProfile({ runtimeHours: 5000 });
@@ -95,19 +97,22 @@ describe('PlanningService', () => {
     it('auto-approves plans under €50k with confidence >= 0.8 when user mode is AUTO_APPROVE', async () => {
         prismaMock.user.findUnique.mockResolvedValue({ planApprovalMode: 'AUTO_APPROVE' });
 
-        (generateObject as jest.Mock).mockResolvedValue({
-            object: {
+        (generateText as jest.Mock).mockResolvedValue({
+            text: JSON.stringify({
                 planId: 'plan-ignored',
                 machineId: 'ignored',
                 status: 'draft',
                 totalInvestment: 0,
                 totalAnnualSavings: 0,
                 paybackMonths: 0,
+                totalDowntimeHours: 0,
+                totalCo2ReductionKg: 0,
                 confidence: 0,
                 measures: [],
                 executiveSummary: 'German summary',
+                executiveSummaryEn: null,
                 generatedAt: new Date().toISOString(),
-            },
+            }),
         });
 
         const profile = makeProfile({ runtimeHours: 25000, observedIssues: ['Issue 1', 'Issue 2'] });
@@ -121,19 +126,22 @@ describe('PlanningService', () => {
     it('keeps plan as draft when totalInvestment exceeds €50k', async () => {
         prismaMock.user.findUnique.mockResolvedValue({ planApprovalMode: 'AUTO_APPROVE' });
 
-        (generateObject as jest.Mock).mockResolvedValue({
-            object: {
+        (generateText as jest.Mock).mockResolvedValue({
+            text: JSON.stringify({
                 planId: 'plan-ignored',
                 machineId: 'ignored',
                 status: 'draft',
                 totalInvestment: 0,
                 totalAnnualSavings: 0,
                 paybackMonths: 0,
+                totalDowntimeHours: 0,
+                totalCo2ReductionKg: 0,
                 confidence: 0,
                 measures: [],
                 executiveSummary: 'German summary',
+                executiveSummaryEn: null,
                 generatedAt: new Date().toISOString(),
-            },
+            }),
         });
 
         const profile = makeProfile({ runtimeHours: 25000 });
@@ -147,19 +155,22 @@ describe('PlanningService', () => {
     });
 
     it('scales investment and savings for high runtime machines', async () => {
-        (generateObject as jest.Mock).mockResolvedValue({
-            object: {
+        (generateText as jest.Mock).mockResolvedValue({
+            text: JSON.stringify({
                 planId: 'plan-ignored',
                 machineId: 'ignored',
                 status: 'draft',
                 totalInvestment: 0,
                 totalAnnualSavings: 0,
                 paybackMonths: 0,
+                totalDowntimeHours: 0,
+                totalCo2ReductionKg: 0,
                 confidence: 0,
                 measures: [],
                 executiveSummary: 'German summary',
+                executiveSummaryEn: null,
                 generatedAt: new Date().toISOString(),
-            },
+            }),
         });
 
         const profile = makeProfile({ runtimeHours: 25000 });

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
     ProjectPlanSchema,
@@ -74,15 +74,14 @@ export class PlanningService {
         const planId = `plan-${profile.machineId}-${Date.now()}`;
 
         // Use the model only for the executive summaries; all financials are computed here.
-        const { object } = await generateObject({
+        const { text } = await generateText({
             model: resolveModel(modelKey, apiKeyOverride),
-            schema: ProjectPlanSchema,
             messages: [
                 {
                     role: 'user',
                     content: `You are a German Industry 4.0 maintenance planner (Instandhaltungsplaner).
 
-Create a concrete project plan for the following machine. The financial totals, selected measures, and task lists below are already fixed — do not change them. Your job is to write the executiveSummary in German for a plant manager (Geschäftsführer) and the optional executiveSummaryEn in English as a backup.
+Create a concrete project plan for the following machine. The financial totals, selected measures, and task lists below are already fixed — do not change them. Your job is to write the executiveSummary in German for a plant manager (Geschäftsführer) and the executiveSummaryEn in English as a backup.
 
 Machine Profile:
 - Machine ID: ${profile.machineId}
@@ -106,12 +105,12 @@ Computed Totals (MUST match):
 - totalCo2ReductionKg: ${totalCo2ReductionKg}
 - confidence: ${confidence}
 
-Return a JSON object matching the ProjectPlanSchema exactly.`,
+Return ONLY a raw JSON object (no markdown fences, no explanations) matching the ProjectPlanSchema exactly.`,
                 },
             ],
         });
 
-        const generated = object as ProjectPlan;
+        const generated = this.parseProjectPlan(text);
 
         // Override model-generated computed fields with our own deterministic values.
         const plan: ProjectPlan = {
@@ -187,6 +186,23 @@ Return a JSON object matching the ProjectPlanSchema exactly.`,
             default:
                 return 'planned';
         }
+    }
+
+    private parseProjectPlan(text: string): ProjectPlan {
+        // Strip markdown fences and surrounding text.
+        let cleaned = text;
+        const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (fenced) {
+            cleaned = fenced[1].trim();
+        } else {
+            const start = text.indexOf('{');
+            const end = text.lastIndexOf('}');
+            if (start !== -1 && end !== -1 && end > start) {
+                cleaned = text.slice(start, end + 1).trim();
+            }
+        }
+        const parsed = JSON.parse(cleaned);
+        return ProjectPlanSchema.parse(parsed) as ProjectPlan;
     }
 
     private async persistPlan(profile: MachineProfile, plan: ProjectPlan, userId: string) {

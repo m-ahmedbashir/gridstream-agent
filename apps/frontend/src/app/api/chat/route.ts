@@ -1,8 +1,11 @@
-import { createGroq } from '@ai-sdk/groq';
+import { createOpenAI } from '@ai-sdk/openai';
 import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, streamText } from 'ai';
 
-const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
+// Route through OpenRouter so the chat assistant can use the same free
+// vision/text models as the extraction pipeline (no paid Groq required).
+const openrouter = createOpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
 });
 
 // Allow streaming responses up to 30 seconds
@@ -70,9 +73,9 @@ function createRefusalStreamResponse() {
 
 export async function POST(req: Request) {
   try {
-    if (!process.env.GROQ_API_KEY) {
+    if (!process.env.OPENROUTER_API_KEY) {
       return new Response(
-        JSON.stringify({ error: 'Missing GROQ_API_KEY in frontend environment' }),
+        JSON.stringify({ error: 'Missing OPENROUTER_API_KEY in frontend environment' }),
         { status: 500 },
       );
     }
@@ -93,7 +96,7 @@ export async function POST(req: Request) {
     const modelMessages = await convertToModelMessages(normalizedMessages as never[]);
 
     const result = streamText({
-      model: groq('qwen/qwen3.6-27b'),
+      model: openrouter('nvidia/nemotron-nano-12b-v2-vl:free'),
       system: `You are a helpful assistant for maintain-agent, an AI-powered industrial maintenance planner.
 
     Security policy (must follow at all times):
