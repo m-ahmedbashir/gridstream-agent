@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     const modelMessages = await convertToModelMessages(normalizedMessages as never[]);
 
     const result = streamText({
-      model: groq('llama-3.3-70b-versatile'),
+      model: groq('qwen/qwen3.6-27b'),
       system: `You are a helpful assistant for maintain-agent, an AI-powered industrial maintenance planner.
 
     Security policy (must follow at all times):
