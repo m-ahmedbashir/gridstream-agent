@@ -175,19 +175,19 @@ pnpm install
 
 ### Environment Variables
 
-**Backend (`apps/backend/.env`):**
+**Backend (`apps/api/.env`):**
 
 ```bash
-cd apps/backend
+cd apps/api
 cp .env.example .env
 ```
 
 Set `GROQ_API_KEY` (free, no card required, from [console.groq.com](https://console.groq.com)) and `DATABASE_URL` (your PostgreSQL connection string).
 
-**Frontend (`apps/frontend/.env`):**
+**Frontend (`apps/web/.env`):**
 
 ```bash
-cd apps/frontend
+cd apps/web
 cp .env.example .env
 ```
 
@@ -196,7 +196,7 @@ Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PU
 ### Database
 
 ```bash
-cd apps/backend
+cd apps/api
 pnpm prisma migrate dev --name add_maintenance_domain
 ```
 
