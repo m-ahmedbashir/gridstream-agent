@@ -13,14 +13,14 @@ export const navItems: NavItem[] = [
     shortcut: ['d', 'd'],
     items: []
   },
-  {
-    title: 'Product',
-    url: '/dashboard/product',
-    icon: 'product',
-    shortcut: ['p', 'p'],
-    isActive: false,
-    items: []
-  },
+  // {
+  //   title: 'Product',
+  //   url: '/dashboard/product',
+  //   icon: 'product',
+  //   shortcut: ['p', 'p'],
+  //   isActive: false,
+  //   items: []
+  // },
   {
     title: 'Maintenance',
     url: '/dashboard/maintenance',
@@ -31,6 +31,10 @@ export const navItems: NavItem[] = [
       {
         title: 'Upload Report',
         url: '/dashboard/maintenance',
+      },
+      {
+        title: 'Live Monitoring',
+        url: '/dashboard/maintenance/live',
       },
       {
         title: 'Measures',
@@ -62,18 +66,18 @@ export const navItems: NavItem[] = [
     isActive: false,
     items: []
   },
-  {
-    title: 'Account',
-    url: '#',
-    icon: 'account',
-    isActive: true,
-    items: [
-      {
-        title: 'Login',
-        shortcut: ['l', 'l'],
-        url: '/',
-        icon: 'login'
-      }
-    ]
-  }
+  // {
+  //   title: 'Account',
+  //   url: '#',
+  //   icon: 'account',
+  //   isActive: false,
+  //   items: [
+  //     {
+  //       title: 'Login',
+  //       shortcut: ['l', 'l'],
+  //       url: '/',
+  //       icon: 'login'
+  //     }
+  //   ]
+  // }
 ];

@@ -68,9 +68,24 @@ model MachineProfile {
   extractedAt         DateTime @default(now())
   rawText             String? // stored original text for audit
   plans               Plan[]
+  readings            MachineReading[]
 
   @@index([userId])
   @@index([machineType])
+}
+
+model MachineReading {
+  id               String   @id @default(uuid())
+  machineProfileId String
+  machineProfile   MachineProfile @relation(fields: [machineProfileId], references: [id], onDelete: Cascade)
+  externalId       String   // dedup key from the source feed (e.g. a PubNub timetoken)
+  metric           String   // e.g. "temperature"
+  value            Float
+  unit             String   // e.g. "°C"
+  recordedAt       DateTime
+
+  @@unique([machineProfileId, externalId])
+  @@index([machineProfileId, recordedAt])
 }
 
 model Measure {

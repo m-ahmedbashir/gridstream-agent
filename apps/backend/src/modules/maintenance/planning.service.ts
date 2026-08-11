@@ -10,6 +10,7 @@ import {
     type MaintenanceTask,
 } from '@maintain/shared';
 import { resolveModel, type ModelKey } from '../extraction/model-registry';
+import { CarbonIntensityService } from '../carbon/carbon-intensity.service';
 
 /**
  * Every field the model could produce except these two summaries gets
@@ -34,7 +35,10 @@ const ExecutiveSummarySchema = z.object({
 export class PlanningService {
     private readonly logger = new Logger(PlanningService.name);
 
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly carbonIntensityService?: CarbonIntensityService,
+    ) { }
 
     async generatePlan(
         profile: MachineProfile,
@@ -88,6 +92,13 @@ export class PlanningService {
         // and rejects plans by this id, so it can't be a synthetic client-side string.
         const planId = randomUUID();
 
+        // Decorative signal only — never touches a computed financial above. Silently
+        // absent from the prompt if the token isn't configured or the request fails.
+        const carbonIntensity = await this.carbonIntensityService?.getLatest('DE').catch(() => null);
+        const carbonContext = carbonIntensity
+            ? `\n\nCurrent German grid carbon intensity: ${Math.round(carbonIntensity.carbonIntensity)} gCO2eq/kWh (as of ${carbonIntensity.datetime}). Factor this into the executive summary — if it's a high-carbon moment, recommend scheduling energy-intensive work during lower-carbon hours instead.`
+            : '';
+
         // Use the model only for the executive summaries; all financials are computed here.
         const { text } = await generateText({
             model: resolveModel(modelKey, apiKeyOverride),
@@ -118,7 +129,7 @@ Computed Totals (for context only, mention them in the narrative — do not inve
 - paybackMonths: ${Math.round(weightedPayback)}
 - totalDowntimeHours: ${totalDowntimeHours}
 - totalCo2ReductionKg: ${totalCo2ReductionKg}
-- confidence: ${confidence}
+- confidence: ${confidence}${carbonContext}
 
 Return ONLY a raw JSON object (no markdown fences, no explanations) with exactly these two keys: { "executiveSummary": "<German text>", "executiveSummaryEn": "<English text>" }`,
                 },
