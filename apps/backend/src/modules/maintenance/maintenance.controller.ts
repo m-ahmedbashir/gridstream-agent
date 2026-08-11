@@ -24,11 +24,14 @@ import { PlanningService } from './planning.service';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { MachineType, Criticality } from '@maintain/shared';
+import { MODEL_REGISTRY } from '../extraction/model-registry';
 
 class ExtractMaintenanceDto {
     text?: string;
     userId?: string;
     processingMode?: string;
+    /** Per-upload override — falls back to the user's saved Settings model when omitted. */
+    modelKey?: string;
 }
 
 class CreateMachineDto {
@@ -82,6 +85,12 @@ export class MaintenanceController {
     ): Promise<MaintenanceExtractionResult> {
         this.logger.log(`Received maintenance report: file=${file?.originalname ?? 'none'}, text=${dto.text ? 'provided' : 'none'}`);
 
+        if (dto.modelKey && !(dto.modelKey in MODEL_REGISTRY)) {
+            throw new BadRequestException(
+                `Unknown modelKey "${dto.modelKey}". Valid keys: ${Object.keys(MODEL_REGISTRY).join(', ')}`,
+            );
+        }
+
         const userId = dto.userId || 'default-user';
         const [settings, apiKeyOverride] = await Promise.all([
             this.usersService.getSettings(userId),
@@ -92,7 +101,7 @@ export class MaintenanceController {
             userId,
             file,
             dto.text,
-            settings.modelKey,
+            dto.modelKey || settings.modelKey,
             apiKeyOverride,
             dto.processingMode || settings.processingMode,
         );

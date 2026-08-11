@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { OcrService } from '../extraction/ocr.service';
 
 jest.mock('ai', () => ({
+    ...jest.requireActual('ai'),
     generateText: jest.fn().mockResolvedValue({
         text: JSON.stringify({
             data: {
@@ -159,5 +160,29 @@ describe('MaintenanceExtractionService', () => {
         const result = await service.processFile('user-1', file);
 
         expect(result.machineProfileId).toBe('profile-123');
+    });
+
+    it('retries once and succeeds when the first model call returns an unparseable body (e.g. an empty/keep-alive-only free-tier response)', async () => {
+        (generateText as jest.Mock).mockResolvedValueOnce({ text: '' });
+        const file = makeFile('Maschinen-ID: CNC-001');
+
+        const result = await service.processFile('user-1', file);
+
+        expect(generateText).toHaveBeenCalledTimes(2);
+        expect(result.extractedData.machineId).toBe('CNC-001');
+    });
+
+    it('fails after exhausting retries when every model call returns an unparseable body', async () => {
+        (generateText as jest.Mock).mockResolvedValue({ text: '' });
+        const file = makeFile('Maschinen-ID: CNC-001');
+
+        await expect(service.processFile('user-1', file)).rejects.toThrow();
+
+        expect(generateText).toHaveBeenCalledTimes(2);
+        expect(prismaMock.extractionLog.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ success: false }),
+            }),
+        );
     });
 });
