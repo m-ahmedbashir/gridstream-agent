@@ -1,10 +1,13 @@
 import { PrismaClient } from '@prisma/client';
-import { seedMeasures } from '../src/modules/maintenance/seed-measures';
 
 const prisma = new PrismaClient();
 
+// No-op for now: the maintenance-domain seed data (Measure catalog) was removed
+// along with modules/maintenance/. This script is kept as the wired
+// `prisma.seed` entry point for whatever the future VPP/telemetry domain needs
+// to seed (e.g. demo DeviceAssets) — see REFACTOR_PROGRESS.md.
 async function main() {
-  await seedMeasures(prisma);
+  // Intentionally empty.
 }
 
 main()
