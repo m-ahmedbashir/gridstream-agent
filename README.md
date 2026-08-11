@@ -69,7 +69,7 @@ flowchart TD
     style L fill:#334155,color:#fff
 ```
 
-A couple of things that don't show up in the boxes above: you can bring your own Groq/OpenAI/Anthropic API key in Settings instead of using the app's shared free one (encrypted at rest, never shown back to you), and there's a chat assistant on the Chat page if you'd rather just ask questions about a machine or plan instead of clicking through the flow above.
+A couple of things that don't show up in the boxes above: you can bring your own Groq/OpenAI/Anthropic API key in Settings instead of using the app's shared free one (encrypted at rest, never shown back to you), there's a chat assistant on the Chat page if you'd rather just ask questions about a machine or plan instead of clicking through the flow above, and a Live Monitoring screen offers a second way into the same flow — a machine's live-detected issues land in the same profile a document upload would, so "Click Find Measures" in step 4 works identically either way.
 
 ---
 
@@ -88,7 +88,9 @@ A couple of things that don't show up in the boxes above: you can bring your own
 - **Real observability.** Every extraction attempt writes an `ExtractionLog` row. The `/maintenance/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, average confidence, top machine types, OCR usage rate, and vision usage rate.
 - **A provider-agnostic model registry.** Extraction and planning use a small registry (`model-registry.ts`) mapping keys to Groq, OpenAI, or Anthropic, with vision-capability tracking so a text-only model can't silently be sent an image.
 - **BYOK — bring your own provider key, encrypted at rest.** A user can save their own Groq/OpenAI/Anthropic key in Settings instead of using the app's shared one. AES-256-GCM authenticated encryption, with decryption happening server-side immediately before the provider call.
-- **Demo reports.** Three synthetic German maintenance reports are included in `demo-data/` for quick end-to-end testing.
+- **Carbon-aware planning.** Before writing the executive summary, the planner pulls live German grid carbon intensity from [Electricity Maps](https://www.electricitymaps.com) and — when available — asks the model to factor it into scheduling advice (e.g. run energy-intensive work during low-carbon hours). Purely additive: the token is optional, a failed/missing call is silently omitted from the prompt, and the number never touches any computed financial.
+- **Live Monitoring.** A per-machine live-telemetry screen at `/dashboard/maintenance/live` — seeded automatically with demo machines on a new account's first visit, or added manually via a quick 4-field form, so it never requires a document upload first. Readings are explicitly disclosed as simulated (re-baselined from a real public live feed around each machine's own profile, not presented as real sensor data), and any detected anomaly is written straight into that machine's `observedIssues`, so it flows through the exact same Find Measures → Plan pipeline a document-derived issue would.
+- **Demo reports.** Three synthetic German maintenance reports are included in `demo-data/`, both as Markdown source and pre-rendered PDF, for quick end-to-end testing.
 
 ### 🔵 Roadmap
 
@@ -123,6 +125,8 @@ maintain-agent/
 │       └── src/modules/
 │           ├── extraction/           # Generic extraction pipeline (PDF, OCR, vision, model registry)
 │           ├── compliance/           # PII masking
+│           ├── carbon/               # Live grid carbon intensity (Electricity Maps)
+│           ├── telemetry/            # Simulated live machine telemetry + anomaly detection
 │           ├── maintenance/          # Maintenance report extraction, matching, planning
 │           │   ├── maintenance-extraction.service.ts
 │           │   ├── matching.service.ts
@@ -130,7 +134,7 @@ maintain-agent/
 │           └── users/                # Per-user plan approval/model settings
 ├── packages/
 │   └── shared/         # @maintain/shared — Zod schemas and shared types
-├── demo-data/        # Synthetic German maintenance reports
+├── demo-data/        # Synthetic German maintenance reports (Markdown + PDF)
 ├── turbo.json           # build/test/typecheck pipeline across all workspaces
 ├── LICENSE
 ├── CONTRIBUTING.md
@@ -147,6 +151,7 @@ maintain-agent/
 - **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`
 - **Backend:** NestJS, Prisma, PostgreSQL
 - **Auth:** Clerk
+- **Live data:** [Electricity Maps](https://www.electricitymaps.com) (grid carbon intensity), ThingSpeak (public live feed powering simulated machine telemetry)
 - **Industrial maintenance domain models:** `MachineProfile`, `Measure`, `ProjectPlan`
 - **Workspaces/Tooling:** pnpm, Turborepo, GitHub Actions
 

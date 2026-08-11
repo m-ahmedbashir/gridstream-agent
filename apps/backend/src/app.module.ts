@@ -6,9 +6,10 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { UsersModule } from './modules/users/users.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
+import { TelemetryModule } from './modules/telemetry/telemetry.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, ComplianceModule, UsersModule, MaintenanceModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, ComplianceModule, UsersModule, MaintenanceModule, TelemetryModule],
   controllers: [AppController],
   providers: [AppService],
 })

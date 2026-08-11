@@ -10,7 +10,7 @@ import { IconUpload, IconX, IconTextCaption } from '@tabler/icons-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useRouter } from 'next/navigation';
-import type { MachineProfile } from '@maintain/shared';
+import type { MachineProfile, MachineProfileConfidence } from '@maintain/shared';
 
 function CriticalityBadge({ criticality }: { criticality: string }) {
     const variants: Record<string, string> = {
@@ -22,7 +22,46 @@ function CriticalityBadge({ criticality }: { criticality: string }) {
     return <Badge className={variants[criticality] ?? variants.medium}>{criticality}</Badge>;
 }
 
-function MachineProfileCard({ profile, machineProfileId }: { profile: MachineProfile; machineProfileId: string }) {
+function confidenceStyle(value: number): string {
+    if (value >= 0.8) return 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400';
+    if (value >= 0.4) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-400';
+    return 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400';
+}
+
+/** One of the six fixed anchors the extraction prompt is forced to use — see MaintenanceExtractionService. */
+function ConfidenceChip({ label, value }: { label: string; value: number }) {
+    return (
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${confidenceStyle(value)}`}>
+            {label}
+            <span className='font-mono tabular-nums opacity-80'>{Math.round(value * 100)}%</span>
+        </span>
+    );
+}
+
+const CONFIDENCE_FIELD_LABELS: Record<keyof MachineProfileConfidence, string> = {
+    machineId: 'Machine ID',
+    machineType: 'Type',
+    manufacturer: 'Manufacturer',
+    yearInstalled: 'Year Installed',
+    runtimeHours: 'Runtime Hours',
+    lastServiceDate: 'Last Service',
+    observedIssues: 'Observed Issues',
+    energyConsumptionKwh: 'Energy Consumption',
+    criticality: 'Criticality',
+    location: 'Location',
+};
+
+function MachineProfileCard({
+    profile,
+    machineProfileId,
+    confidence,
+    avgConfidence,
+}: {
+    profile: MachineProfile;
+    machineProfileId: string;
+    confidence: MachineProfileConfidence;
+    avgConfidence: number;
+}) {
     const router = useRouter();
 
     return (
@@ -30,7 +69,13 @@ function MachineProfileCard({ profile, machineProfileId }: { profile: MachinePro
             <CardHeader>
                 <CardTitle className='flex items-center justify-between'>
                     <span>{profile.manufacturer} — {profile.machineId}</span>
-                    <CriticalityBadge criticality={profile.criticality} />
+                    <div className='flex items-center gap-2'>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${confidenceStyle(avgConfidence)}`}>
+                            Overall confidence
+                            <span className='font-mono tabular-nums opacity-80'>{Math.round(avgConfidence * 100)}%</span>
+                        </span>
+                        <CriticalityBadge criticality={profile.criticality} />
+                    </div>
                 </CardTitle>
                 <CardDescription>
                     {profile.machineType} • {profile.runtimeHours.toLocaleString('de-DE')} h • {profile.yearInstalled}
@@ -59,16 +104,41 @@ function MachineProfileCard({ profile, machineProfileId }: { profile: MachinePro
                         ))}
                     </div>
                 </div>
-                <Button onClick={() => router.push(`/dashboard/maintenance/measures?machineProfileId=${machineProfileId}`)}>
-                    Find Measures
-                </Button>
+                <div>
+                    <p className='text-muted-foreground mb-2'>
+                        Extraction confidence <span className='text-xs'>(per field — six fixed anchors, not a free-floating guess)</span>
+                    </p>
+                    <div className='flex flex-wrap gap-2'>
+                        {(Object.keys(CONFIDENCE_FIELD_LABELS) as (keyof MachineProfileConfidence)[]).map((field) => (
+                            <ConfidenceChip key={field} label={CONFIDENCE_FIELD_LABELS[field]} value={confidence[field]} />
+                        ))}
+                    </div>
+                </div>
+                <div className='flex gap-2'>
+                    <Button onClick={() => router.push(`/dashboard/maintenance/measures?machineProfileId=${machineProfileId}`)}>
+                        Find Measures
+                    </Button>
+                    <Button
+                        variant='outline'
+                        onClick={() => router.push(`/dashboard/maintenance/live?machineProfileId=${machineProfileId}`)}
+                    >
+                        Live Monitoring
+                    </Button>
+                </div>
             </CardContent>
         </Card>
     );
 }
 
 type ExtractionOutcome =
-    | { status: 'success'; fileName: string; profile: MachineProfile; machineProfileId: string }
+    | {
+        status: 'success';
+        fileName: string;
+        profile: MachineProfile;
+        machineProfileId: string;
+        confidence: MachineProfileConfidence;
+        avgConfidence: number;
+    }
     | { status: 'error'; fileName: string; message: string };
 
 // Bounded, not unlimited — the free-tier AI keys behind extraction rate-limit,
@@ -94,7 +164,14 @@ export function MaintenanceUploadView() {
                 const file = batch[idx];
                 outcomes.push(
                     outcome.status === 'fulfilled'
-                        ? { status: 'success', fileName: file.name, profile: outcome.value.extractedData, machineProfileId: outcome.value.machineProfileId }
+                        ? {
+                            status: 'success',
+                            fileName: file.name,
+                            profile: outcome.value.extractedData,
+                            machineProfileId: outcome.value.machineProfileId,
+                            confidence: outcome.value.confidence,
+                            avgConfidence: outcome.value.avgConfidence,
+                        }
                         : { status: 'error', fileName: file.name, message: outcome.reason instanceof Error ? outcome.reason.message : 'Extraction failed' },
                 );
             });
@@ -109,7 +186,14 @@ export function MaintenanceUploadView() {
         if (!pastedText.trim()) return;
         try {
             const res = await extractMaintenance({ text: pastedText });
-            setResults([{ status: 'success', fileName: 'pasted text', profile: res.extractedData, machineProfileId: res.machineProfileId }]);
+            setResults([{
+                status: 'success',
+                fileName: 'pasted text',
+                profile: res.extractedData,
+                machineProfileId: res.machineProfileId,
+                confidence: res.confidence,
+                avgConfidence: res.avgConfidence,
+            }]);
             setPastedText('');
         } catch (error) {
             console.error(error);
@@ -228,7 +312,12 @@ export function MaintenanceUploadView() {
                         outcome.status === 'success' ? (
                             <div key={i} className='space-y-2'>
                                 <p className='text-sm text-muted-foreground'>{outcome.fileName}</p>
-                                <MachineProfileCard profile={outcome.profile} machineProfileId={outcome.machineProfileId} />
+                                <MachineProfileCard
+                                    profile={outcome.profile}
+                                    machineProfileId={outcome.machineProfileId}
+                                    confidence={outcome.confidence}
+                                    avgConfidence={outcome.avgConfidence}
+                                />
                             </div>
                         ) : (
                             <Card key={i} className='border-red-200 dark:border-red-900'>
