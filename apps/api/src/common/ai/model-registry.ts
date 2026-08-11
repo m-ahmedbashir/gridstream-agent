@@ -1,6 +1,3 @@
-import { createGroq } from '@ai-sdk/groq';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -84,28 +81,47 @@ export function getModelDescriptor(key: ModelKey): ModelDescriptor {
  * Each provider reads its own API key from its own env var by default, so
  * adding a provider here never touches the other providers' configuration.
  *
+ * Async and importing each provider SDK lazily (`await import(...)`) rather
+ * than via a static top-level import is deliberate, not stylistic: as of
+ * AI SDK v4, `@ai-sdk/groq`/`@ai-sdk/openai`/`@ai-sdk/anthropic` are
+ * ESM-only (`"type": "module"`, no CJS build), but this backend compiles to
+ * CommonJS (`apps/api/tsconfig.json`'s `module: "commonjs"`). A static
+ * `import`/`require` of any of them would crash with `ERR_REQUIRE_ESM` the
+ * moment anything loads this file — before `resolveModel` is ever called.
+ * Dynamic `import()` is Node's supported interop path for CJS code
+ * consuming an ESM-only package, and TypeScript's commonjs emit preserves
+ * it as a real dynamic import rather than downleveling it to `require()`.
+ *
  * @param apiKeyOverride - A user-supplied (BYOK) key, already decrypted by
  *   the caller, to use in place of the app's shared env-var key for this one
  *   call. Never logged, never persisted here — the caller owns that.
  */
-export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageModel {
+export async function resolveModel(key: ModelKey, apiKeyOverride?: string): Promise<LanguageModel> {
     const descriptor = MODEL_REGISTRY[key];
 
     switch (descriptor.provider) {
-        case 'groq':
+        case 'groq': {
+            const { createGroq } = await import('@ai-sdk/groq');
             return createGroq({ apiKey: apiKeyOverride ?? process.env.GROQ_API_KEY })(descriptor.modelId);
-        case 'openai':
+        }
+        case 'openai': {
+            const { createOpenAI } = await import('@ai-sdk/openai');
             return createOpenAI({ apiKey: apiKeyOverride ?? process.env.OPENAI_API_KEY })(descriptor.modelId);
-        case 'anthropic':
+        }
+        case 'anthropic': {
+            const { createAnthropic } = await import('@ai-sdk/anthropic');
             return createAnthropic({ apiKey: apiKeyOverride ?? process.env.ANTHROPIC_API_KEY })(descriptor.modelId);
-        case 'openrouter':
+        }
+        case 'openrouter': {
             // .chat(...) forces the Chat Completions endpoint. Calling the provider
             // directly defaults to the Responses API, which OpenRouter supports far
             // less reliably (observed: free models hanging for minutes then
             // returning an empty/whitespace-only body instead of a completion).
+            const { createOpenAI } = await import('@ai-sdk/openai');
             return createOpenAI({
                 baseURL: 'https://openrouter.ai/api/v1',
                 apiKey: apiKeyOverride ?? process.env.OPENROUTER_API_KEY,
             }).chat(descriptor.modelId);
+        }
     }
 }

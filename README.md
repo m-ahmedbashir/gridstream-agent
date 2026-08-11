@@ -151,7 +151,7 @@ For the full set of architectural rules (SOLID conventions, minimal-footprint fe
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18+)
+- [Node.js](https://nodejs.org/) (v22+ — required by AI SDK 7)
 - [pnpm](https://pnpm.io/installation) (v10+)
 - A PostgreSQL database (e.g. a free [Neon](https://neon.tech) or [Railway](https://railway.app) instance)
 

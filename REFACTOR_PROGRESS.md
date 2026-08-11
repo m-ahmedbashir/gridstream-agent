@@ -356,3 +356,114 @@ document/OCR domain that should have gone in the first cleanup pass.
 - `pnpm typecheck` — 4/4 tasks pass.
 - `pnpm test` — 3 suites, 25 tests pass (`users.service.spec.ts` updated for
   the dropped `processingMode` field, same remaining coverage).
+
+---
+
+## 2026-08-12 — Vercel AI SDK v6→v7, Node 20→22, and a real DbService bug found along the way
+
+`ai` was pinned at `^6.0.116` (latest available: `6.0.250`) and every
+`@ai-sdk/*` provider package was similarly far behind even its own major
+version. Bumped straight to the current majors — `ai@^7.0.62`,
+`@ai-sdk/{anthropic,groq,openai}@^4.x`, `@ai-sdk/react@^4.0.65` — rather than
+just catching up within v6, since Node 22 was already the frontend's pinned
+version (`apps/web/.nvmrc`) and available in every environment that matters
+here.
+
+### Node version bump (required by AI SDK 7)
+
+AI SDK 7 requires Node ≥22 and is ESM-only. This environment already runs
+Node 22.19.0 and `apps/web/.nvmrc` already said `22`, but two things didn't
+match yet:
+- `.github/workflows/ci.yml` was pinned to Node 20 — bumped to 22.
+- No `package.json` declared an `engines.node` requirement anywhere — added
+  `"engines": { "node": ">=22" }` to the root, `apps/api`, and `apps/web`
+  `package.json`s so a mismatched local Node version fails loudly instead of
+  hitting a confusing ESM error three layers down.
+- `README.md`'s prerequisite line updated from "Node.js (v18+)" to "v22+
+  (required by AI SDK 7)".
+
+### API migration (deprecated aliases still worked, migrated anyway)
+
+`pnpm typecheck` passed immediately after the version bump with zero changes
+— v7 keeps `system` and `result.toUIMessageStreamResponse()` working as
+deprecated aliases. Migrated `apps/web/src/app/api/chat/route.ts` to the
+non-deprecated forms anyway, since leaving freshly-touched code on APIs
+already marked deprecated in the version just installed isn't good practice:
+- `system: '...'` → `instructions: '...'` on the `streamText` call.
+- `result.toUIMessageStreamResponse({ onError })` → the standalone
+  `createUIMessageStreamResponse({ stream: toUIMessageStream({ stream:
+  result.stream, onError }) })`, matching the shape the refusal-response path
+  in the same file already used.
+
+### The real breaking change: `@ai-sdk/*` v4 is ESM-only, `apps/api` compiles to CommonJS
+
+Typecheck passing was misleading — `pnpm test` failed with `SyntaxError:
+Cannot use import statement outside a module`, tracing back to
+`common/ai/model-registry.ts`'s static top-level imports of `createGroq`/
+`createOpenAI`/`createAnthropic`. `@ai-sdk/*` v4 packages declare `"type":
+"module"` with no CommonJS build; `apps/api/tsconfig.json` compiles with
+`"module": "commonjs"`. A static `import`/`require` of an ESM-only package
+under CommonJS throws `ERR_REQUIRE_ESM` **at module-load time** — meaning
+merely loading `model-registry.ts` (e.g. for its `MODEL_REGISTRY` constant,
+which is all `UsersService` actually uses today) would have crashed the real
+NestJS backend on boot, not just Jest. This was caught before it could ship
+precisely because verifying it meant actually running the compiled backend,
+not just trusting a clean `tsc --noEmit`.
+
+**Fix:** `resolveModel()` is now `async` and imports each provider SDK
+lazily via `await import(...)` inside the relevant `switch` case, instead of
+statically at the top of the file. Node's CommonJS runtime supports dynamic
+`import()` as the sanctioned way to consume an ESM-only package, and
+TypeScript's commonjs emit preserves `import()` expressions rather than
+downleveling them to `require()`. `resolveModel` has zero callers anywhere
+in the current live codebase (only `MODEL_REGISTRY`/`DEFAULT_MODEL_KEY`/
+`ModelKey` are imported elsewhere), so making it async broke nothing —
+Stage 5's diagnostic agent, its first real caller, will just `await` it.
+
+**Verified, not assumed:** ran `ts-node` against the real compiled-CommonJS
+tsconfig to call `resolveModel('groq:compound-mini')` directly — resolved a
+real model object, confirming the dynamic import genuinely works under
+Node's CJS runtime and isn't just papering over the Jest failure.
+
+### A second, unrelated bug found by the same verification effort
+
+Went one step further and actually booted the compiled backend
+(`node dist/src/main.js`) rather than stopping at Jest passing. It got past
+all module loading cleanly (proving the fix above), then failed with
+`Cannot read properties of undefined (reading 'execute')` on
+`dbService.db.execute(...)` in `main.ts`'s startup health check —
+`DbService.db` was `undefined`.
+
+Root cause, confirmed by direct reproduction (`app.get(DbService).db` right
+after `NestFactory.create()` resolved, logged, was genuinely `undefined`):
+**`NestFactory.create()` does not run `onModuleInit` lifecycle hooks** — those
+fire only when `app.init()` (called internally by `app.listen()`) runs, which
+`main.ts` does *after* the health check, not before. `DbService` had been
+built the Prisma-era way — `pool`/`db` constructed in `onModuleInit` (a
+holdover pattern from `PrismaService`, which happened to work there because
+`PrismaClient`'s query methods lazily self-connect regardless of whether
+`onModuleInit` ran). Drizzle's `db` object has no such self-initializing
+behavior — if `onModuleInit` hasn't fired, it's just `undefined`.
+
+**Fix:** moved `pool`/`db` construction into `DbService`'s constructor —
+both are synchronous and need no injected dependencies, so there was never a
+real reason to defer them to a lifecycle hook. Only `onModuleDestroy` (closing
+the pool) remains a real lifecycle hook. Verified: `app.get(DbService).db` is
+now populated immediately after `NestFactory.create()`, and a full compiled
+boot against a genuinely unreachable `DATABASE_URL` now fails with a real
+`ECONNREFUSED` from the health check's actual `SELECT 1` query — not a
+`TypeError` from a service that was never initialized.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 tasks pass.
+- `pnpm test` — 3 suites, 25 tests pass.
+- `pnpm build` (both apps) — succeeds.
+- Compiled backend boot (`node dist/src/main.js`), twice: once missing
+  `BYOK_ENCRYPTION_KEY` (fails on that specific, correct, unrelated check —
+  proves nothing AI-SDK-related is broken), once with all required env vars
+  set against an unreachable `DATABASE_URL` (fails with `ECONNREFUSED` from
+  a real query — proves the DbService fix works end to end).
+- `resolveModel()` called directly via `ts-node` under the real
+  `commonjs`-target tsconfig — resolves a real model object.
+- `pnpm build` (frontend) — succeeds, `/api/chat` route compiles.

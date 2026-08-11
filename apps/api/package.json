@@ -5,6 +5,9 @@
   "author": "Ahmed Bashir",
   "private": true,
   "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "cross-env PORT=3001 nest start --watch",
     "build": "nest build",
@@ -24,15 +27,15 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.96",
-    "@ai-sdk/groq": "^3.0.35",
-    "@ai-sdk/openai": "^3.0.84",
+    "@ai-sdk/anthropic": "^4.0.38",
+    "@ai-sdk/groq": "^4.0.28",
+    "@ai-sdk/openai": "^4.0.40",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@maintain/shared": "workspace:*",
-    "ai": "^6.0.116",
+    "ai": "^7.0.62",
     "drizzle-orm": "^0.44.6",
     "nestjs-zod": "^5.1.1",
     "pg": "^8.16.3",

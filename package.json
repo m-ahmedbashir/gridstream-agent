@@ -17,6 +17,9 @@
   "keywords": [],
   "author": "Ahmed Bashir",
   "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@10.30.3",
   "devDependencies": {
     "turbo": "^2.10.4"
