@@ -4,7 +4,6 @@ CREATE TABLE "users" (
 	"plan_approval_mode" text DEFAULT 'MANUAL_REVIEW' NOT NULL,
 	"model_key" text DEFAULT 'groq:llama-4-scout' NOT NULL,
 	"encrypted_api_key" text,
-	"processing_mode" text DEFAULT 'vision' NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "users_clerk_id_unique" UNIQUE("clerk_id")

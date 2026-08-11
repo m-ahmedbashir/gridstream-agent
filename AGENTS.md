@@ -8,7 +8,7 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for what's built so far and what's next.
 
-What's already load-bearing: the provider-agnostic AI model registry (`apps/api/src/modules/extraction/model-registry.ts`), Clerk-linked user settings incl. BYOK (`apps/api/src/modules/users/`), BYOK encryption (`apps/api/src/common/crypto/`).
+What's already load-bearing: the provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`), Clerk-linked user settings incl. BYOK (`apps/api/src/modules/users/`), BYOK encryption (`apps/api/src/common/crypto/`).
 
 ## Architecture & SOLID principles
 
@@ -20,7 +20,7 @@ SOLID at the file level, as you write, not as a retrofit:
 
 - **SRP** — a controller routes, a service holds business logic, a `*.service.spec.ts` tests it. `UsersController` (`apps/api/src/modules/users/users.controller.ts`) delegates every real decision to `UsersService` — it never computes anything itself. Two reasons to change in one file means split it.
 - **OCP** — a new feature is a new module (`*.controller.ts` + `*.module.ts` + `*.service.ts`), not an edit inside an unrelated one. Registering the new module in `app.module.ts`'s `imports` array is the accepted one-line exception.
-- **LSP** — the model-provider abstraction (`apps/api/src/modules/extraction/model-registry.ts`) is the reference: `resolveModel(key, apiKeyOverride?)` returns a `LanguageModel` regardless of whether the key resolves to Groq, OpenAI, Anthropic, or OpenRouter — callers never branch on provider. Don't bake a single-provider assumption into a service meant to work with any registry entry.
+- **LSP** — the model-provider abstraction (`apps/api/src/common/ai/model-registry.ts`) is the reference: `resolveModel(key, apiKeyOverride?)` returns a `LanguageModel` regardless of whether the key resolves to Groq, OpenAI, Anthropic, or OpenRouter — callers never branch on provider. Don't bake a single-provider assumption into a service meant to work with any registry entry.
 - **ISP** — request DTOs are precise per-endpoint, never one shared blob. A small, endpoint-specific interface, not one bloated request type with mostly-unused optional fields.
 - **DIP** — NestJS constructor injection throughout; a service depends on injected services, never `new`s up its own collaborator. Accepted exception: `model-registry.ts`'s `resolveModel`/`getModelDescriptor` are plain exported functions, not injectable services — fine, since they're pure or read only `process.env` at call time, with no state worth mocking.
 
@@ -30,9 +30,10 @@ SOLID at the file level, as you write, not as a retrofit:
 
 ```
 apps/api/                  NestJS backend (deployed to Railway)
-  src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts
+  src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts, tools/ (for an AI-calling feature — see "Building an AI feature")
   src/common/db/              Drizzle: schema.ts (table defs), db.service.ts (pg Pool + Drizzle instance)
   src/common/crypto/          BYOK AES-256-GCM encryption
+  src/common/ai/              model-registry.ts — the only place a provider SDK is imported, ever
   drizzle.config.ts           drizzle-kit config (schema path, migration output dir)
   drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
 
@@ -67,11 +68,29 @@ A shape gets defined **once**, in `packages/shared`, and both apps import that s
 - **Frontend reuses the identical import:** a TanStack Query hook's return type is `z.infer<typeof Schema>` imported from `@maintain/shared`, not a hand-typed `interface` that happens to look the same today. If the shape also needs client-side form validation, pass the same schema straight to `zodResolver()` instead of writing a parallel validation version.
 - Never hand-write a type duplicating a DB row shape either — derive it from the schema/ORM, don't redeclare it.
 
-## AI SDK usage (Vercel AI SDK)
+## Building an AI feature (Vercel AI SDK)
 
-- Model access goes through the provider-agnostic registry (`apps/api/src/modules/extraction/model-registry.ts`) — a keyed map of provider/model/vision-capability, resolved via `resolveModel(key, apiKeyOverride?)`. Add a new model by adding a registry entry, never by hardcoding a provider SDK call in a service.
+**Model access is centralized, permanently.** `apps/api/src/common/ai/model-registry.ts` is the *only* place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`, `@ai-sdk/anthropic`) gets imported. A feature resolves a model via `resolveModel(key, apiKeyOverride?)` — never imports a provider SDK itself, never hardcodes a model id inline. Add a new model by adding a registry entry, not by writing a second provider client somewhere else.
+
+**Start with the simplest structure that solves the problem — add orchestration only when the task actually needs it.** Most features here are a single augmented call: a prompt, the relevant tools, and a Zod schema for the output. Reach for a multi-step agent loop only when the model genuinely has to decide *which* tools to call and in *what order* for an open-ended problem — not by default, and not because it looks more sophisticated. An unnecessary agent loop is just more surface area for the same job a single call would do.
+
+**Folder shape for a new AI-calling feature module** (`apps/api/src/modules/<feature>/`):
+```
+<feature>.module.ts
+<feature>.controller.ts        — HTTP surface only, delegates immediately
+<feature>.service.ts           — orchestration: builds the prompt, calls generateObject()/tool(), returns the validated result
+<feature>.service.spec.ts
+tools/
+  <tool-name>.tool.ts           — one file per tool: a pure function + its own Zod input schema
+  <tool-name>.tool.spec.ts      — tools are pure functions, trivially unit-testable without touching the LLM
+```
+The structured-output schema (what the model must return) and any request/response DTOs live in `packages/shared`, per the single-source-of-truth rule above — imported by both the service (to bind `generateObject`) and the frontend (to type whatever reads the result).
+
+**Rules that don't bend regardless of structure:**
 - Use `generateObject()`/`tool()` bound directly to a Zod schema — never `generateText()` plus hand-rolled JSON parsing. No manual JSON parsing, no malformed-response repair logic.
-- All financial/numeric estimates that get persisted or shown as fact must be computed deterministically in TypeScript, never left to the model — the model writes prose around numbers it's given, not numbers of its own.
+- Tools are the interface the model acts through — treat each one like a small public API: one clear job, an unambiguous name, a minimal, precisely-typed input schema. A vague or overloaded tool produces vague or wrong tool calls.
+- All financial/numeric estimates and pass/fail safety thresholds that get persisted or shown as fact must be computed deterministically in TypeScript, never left to the model — the model writes prose around numbers it's given, not numbers of its own.
+- Any model output that would trigger a real-world consequence (a dispatch, an approval, an irreversible write) is a human-in-the-loop checkpoint — persist it in a pending/awaiting-approval state and require an explicit human action before anything downstream acts on it. Never auto-execute off a raw model response.
 - BYOK: a user's own provider API key, AES-256-GCM encrypted at rest (`apps/api/src/common/crypto/`), decrypted only at call time and never logged — see `UsersService.getDecryptedApiKey`.
 
 ## Auth

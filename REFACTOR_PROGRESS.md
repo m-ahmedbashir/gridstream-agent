@@ -286,8 +286,73 @@ above already shrank Prisma's actual footprint to six files total (`app.module.t
 
 ### Still pending
 
-- Applying `apps/api/drizzle/0000_ambiguous_makkari.sql` to a real database —
-  needs a `DATABASE_URL` this environment doesn't have.
+- Applying the generated migration (`apps/api/drizzle/0000_*.sql` — filename
+  changed in the follow-up entry below) to a real database — needs a
+  `DATABASE_URL` this environment doesn't have.
 - Stage 3's domain pivot (`DeviceAsset`/`TelemetryLog`/`FaultDiagnostic`) now
   happens directly against the Drizzle schema in `apps/api/src/common/db/schema.ts`
   — no second ORM migration needed first.
+
+---
+
+## 2026-08-12 — Correction: the "extraction" module wasn't fully load-bearing
+
+Prompted by a direct question ("why did you keep the extraction module?") that
+turned out to have a real answer buried in it. The earlier cleanup kept
+`modules/extraction/` wholesale on the reasoning that the model registry inside
+it was reusable infra. That was half right — closer inspection found it was a
+mix of one genuinely load-bearing piece and two more leftovers from the old
+document/OCR domain that should have gone in the first cleanup pass.
+
+### What was actually true
+
+- `MODEL_REGISTRY`/`resolveModel`/`DEFAULT_MODEL_KEY` — **genuinely used**,
+  `UsersService` depends on these directly to validate and default a user's
+  model preference. Not dead code; deleting it would have broken something real.
+- `extraction.controller.ts` (`GET /extraction/models`) — **dead**. Its own doc
+  comment said it existed for "the Settings page and the upload screen's model
+  picker" — both were deleted in the first cleanup pass. Zero consumers left,
+  confirmed by grep across both apps.
+- `ProcessingMode` (`'vision' | 'local-ocr'`), `PROCESSING_MODES`,
+  `DEFAULT_PROCESSING_MODE`, `isProcessingMode` — **dead weight**, missed the
+  first time because they were bundled inside the same file as the (genuinely
+  needed) model registry. Entirely about "how do we read scanned PDF/image
+  documents" — meaningless without OCR, which the first cleanup already
+  removed. `UsersService` was still storing `processingMode` as a setting with
+  no purpose left.
+
+### What changed
+
+- `apps/api/src/modules/extraction/model-registry.ts` → `apps/api/src/common/ai/model-registry.ts`
+  (`git mv`, history preserved) — relocated to `common/` alongside `db/` and
+  `crypto/` because it's cross-cutting infra with no controller of its own, not
+  a "feature module." Trimmed the stale "extraction pipeline" doc-comment
+  wording (that pipeline no longer exists) and removed the `ProcessingMode`
+  block entirely.
+- Deleted `extraction.controller.ts` and `extraction.module.ts` (dead), and the
+  now-empty `modules/extraction/` directory. Removed `ExtractionModule` from
+  `app.module.ts`.
+- Removed `processingMode` from `common/db/schema.ts` (column dropped),
+  `users.service.ts` (`SettingsUpdate`, `getSettings`, `updateSettings`), and
+  `users.service.spec.ts` (fixtures/assertions). `users.service.ts`'s import of
+  the registry updated to the new `common/ai/` path.
+- Regenerated the Drizzle migration from scratch (the previous one was never
+  applied to any database, so no data/history to preserve) — now 7 columns
+  instead of 8. New file: `apps/api/drizzle/0000_dark_major_mapleleaf.sql`.
+- `AGENTS.md`: fixed the three now-stale `modules/extraction/model-registry.ts`
+  path references to `common/ai/model-registry.ts`; replaced the "AI SDK usage"
+  section with a fuller "Building an AI feature" section documenting the
+  intended folder shape for a future AI-calling module (`tools/` subfolder,
+  one pure function + Zod schema per tool) and the underlying principles
+  (start with the simplest structure that solves the problem; tools as a
+  precise interface, not a grab-bag; deterministic math never left to the
+  model; human-in-the-loop before any consequential action) — this is written
+  as a convention for when Stage 4/5 actually get built, not scaffolding built
+  ahead of time. No new folders were created — the convention lives in docs
+  until a real feature needs it.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 tasks pass.
+- `pnpm test` — 3 suites, 25 tests pass (`users.service.spec.ts` updated for
+  the dropped `processingMode` field, same remaining coverage).

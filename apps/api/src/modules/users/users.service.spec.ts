@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { DbService } from '../../common/db/db.service';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 
-type MockUser = { planApprovalMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
+type MockUser = { planApprovalMode?: string; modelKey?: string; encryptedApiKey?: string | null };
 
 /**
  * Mimics Drizzle's fluent query builder (`.select().from().where().limit()`
@@ -58,7 +58,7 @@ describe('UsersService', () => {
     });
 
     describe('getSettings()', () => {
-        it('returns defaults (MANUAL_REVIEW + openrouter:nemotron-nano-12b-v2-vl-free + vision + no key) when the user does not exist yet', async () => {
+        it('returns defaults (MANUAL_REVIEW + openrouter:nemotron-nano-12b-v2-vl-free + no key) when the user does not exist yet', async () => {
             const { dbService } = makeDbMock(null);
             const service = new UsersService(dbService, encryptionService);
 
@@ -67,13 +67,12 @@ describe('UsersService', () => {
             expect(settings).toEqual({
                 planApprovalMode: 'MANUAL_REVIEW',
                 modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
-                processingMode: 'vision',
                 hasApiKey: false,
             });
         });
 
         it('returns the stored values when the user already has settings', async () => {
-            const { dbService } = makeDbMock({ planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
+            const { dbService } = makeDbMock({ planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o' });
             const service = new UsersService(dbService, encryptionService);
 
             const settings = await service.getSettings('existing-user');
@@ -81,7 +80,6 @@ describe('UsersService', () => {
             expect(settings).toEqual({
                 planApprovalMode: 'AUTO_APPROVE',
                 modelKey: 'openai:gpt-4o',
-                processingMode: 'vision',
                 hasApiKey: false,
             });
         });
@@ -90,7 +88,6 @@ describe('UsersService', () => {
             const { dbService } = makeDbMock({
                 planApprovalMode: 'MANUAL_REVIEW',
                 modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
-                processingMode: 'vision',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
             });
             const service = new UsersService(dbService, encryptionService);
@@ -115,13 +112,12 @@ describe('UsersService', () => {
                     clerkId: 'new-user',
                     planApprovalMode: 'AUTO_APPROVE',
                     modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', // untouched field defaults, doesn't come back as undefined
-                    processingMode: 'vision',
                 }),
             );
         });
 
         it('updates only the field actually provided, leaving the others untouched', async () => {
-            const { dbService, onConflictDoUpdateMock } = makeDbMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', processingMode: 'vision' });
+            const { dbService, onConflictDoUpdateMock } = makeDbMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free' });
             const service = new UsersService(dbService, encryptionService);
 
             await service.updateSettings('existing-user', { modelKey: 'anthropic:claude-3-5-sonnet' });
@@ -164,7 +160,6 @@ describe('UsersService', () => {
                 expect(result).toEqual({
                     planApprovalMode: 'MANUAL_REVIEW',
                     modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
-                    processingMode: 'vision',
                     updatedAt: expect.any(Date),
                     hasApiKey: true,
                 });

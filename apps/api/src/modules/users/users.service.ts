@@ -3,20 +3,11 @@ import { eq } from 'drizzle-orm';
 import { DbService } from '../../common/db/db.service';
 import { users } from '../../common/db/schema';
 import { EncryptionService } from '../../common/crypto/encryption.service';
-import {
-  DEFAULT_MODEL_KEY,
-  DEFAULT_PROCESSING_MODE,
-  MODEL_REGISTRY,
-  PROCESSING_MODES,
-  isProcessingMode,
-  type ModelKey,
-} from '../extraction/model-registry';
+import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, type ModelKey } from '../../common/ai/model-registry';
 
 export interface SettingsUpdate {
   planApprovalMode?: string;
   modelKey?: string;
-  /** How images/scanned PDFs get read: 'vision' or 'local-ocr'. */
-  processingMode?: string;
   /**
    * A plaintext API key to save (BYOK), encrypted before it ever reaches the
    * database. Pass an empty string to remove a previously-saved key.
@@ -42,7 +33,6 @@ export class UsersService {
       .select({
         planApprovalMode: users.planApprovalMode,
         modelKey: users.modelKey,
-        processingMode: users.processingMode,
         encryptedApiKey: users.encryptedApiKey,
       })
       .from(users)
@@ -52,7 +42,6 @@ export class UsersService {
     return {
       planApprovalMode: user?.planApprovalMode || 'MANUAL_REVIEW',
       modelKey: user?.modelKey || DEFAULT_MODEL_KEY,
-      processingMode: user?.processingMode || DEFAULT_PROCESSING_MODE,
       hasApiKey: Boolean(user?.encryptedApiKey),
     };
   }
@@ -61,11 +50,6 @@ export class UsersService {
     if (updates.modelKey && !(updates.modelKey in MODEL_REGISTRY)) {
       throw new BadRequestException(
         `Unknown modelKey "${updates.modelKey}". Valid keys: ${Object.keys(MODEL_REGISTRY).join(', ')}`,
-      );
-    }
-    if (updates.processingMode && !isProcessingMode(updates.processingMode)) {
-      throw new BadRequestException(
-        `Unknown processingMode "${updates.processingMode}". Valid values: ${PROCESSING_MODES.join(', ')}`,
       );
     }
 
@@ -84,7 +68,6 @@ export class UsersService {
     const updateSet: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
     if (updates.planApprovalMode !== undefined) updateSet.planApprovalMode = updates.planApprovalMode;
     if (updates.modelKey !== undefined) updateSet.modelKey = updates.modelKey;
-    if (updates.processingMode !== undefined) updateSet.processingMode = updates.processingMode;
     if (encryptedApiKey !== undefined) updateSet.encryptedApiKey = encryptedApiKey;
 
     const [user] = await this.dbService.db
@@ -93,14 +76,12 @@ export class UsersService {
         clerkId: userId,
         planApprovalMode: updates.planApprovalMode ?? 'MANUAL_REVIEW',
         modelKey: (updates.modelKey as ModelKey) ?? DEFAULT_MODEL_KEY,
-        processingMode: updates.processingMode ?? DEFAULT_PROCESSING_MODE,
         ...(encryptedApiKey !== undefined && { encryptedApiKey }),
       })
       .onConflictDoUpdate({ target: users.clerkId, set: updateSet })
       .returning({
         planApprovalMode: users.planApprovalMode,
         modelKey: users.modelKey,
-        processingMode: users.processingMode,
         updatedAt: users.updatedAt,
         encryptedApiKey: users.encryptedApiKey,
       });
@@ -109,7 +90,6 @@ export class UsersService {
     return {
       planApprovalMode: user.planApprovalMode,
       modelKey: user.modelKey,
-      processingMode: user.processingMode,
       updatedAt: user.updatedAt,
       hasApiKey: Boolean(user.encryptedApiKey),
     };
@@ -117,8 +97,8 @@ export class UsersService {
 
   /**
    * Internal-only: decrypts the caller's saved API key for immediate use in
-   * an AI request. Never exposed over HTTP — only extraction/planning services
-   * call this, and only to hand the plaintext straight to the provider SDK.
+   * an AI request. Never exposed over HTTP — only AI-calling services call
+   * this, and only to hand the plaintext straight to the provider SDK.
    * Returns undefined (not an error) when the user has no key saved, so
    * callers can fall back to the app's shared key.
    */

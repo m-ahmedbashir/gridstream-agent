@@ -1,5 +1,5 @@
 {
-  "id": "c3166eee-7837-42d3-819a-0a113d161485",
+  "id": "d9b90f71-6b9d-4a97-8ab7-ab875a36485c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -39,13 +39,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "processing_mode": {
-          "name": "processing_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'vision'"
         },
         "created_at": {
           "name": "created_at",

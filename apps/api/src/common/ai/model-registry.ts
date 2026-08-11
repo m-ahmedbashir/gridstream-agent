@@ -12,8 +12,8 @@ export interface ModelDescriptor {
     modelId: string;
     /**
      * Whether this model accepts image content parts. Plenty of text-only
-     * models exist — the extraction pipeline must check this before sending
-     * an image, not assume every model can see.
+     * models exist — any caller sending an image (e.g. a photo attached to a
+     * fault report) must check this first, never assume every model can see.
      */
     supportsVision: boolean;
 }
@@ -21,12 +21,14 @@ export interface ModelDescriptor {
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 /**
- * Every model the extraction pipeline can be pointed at. Swapping the default
- * model is a one-line change to DEFAULT_MODEL_KEY below, not a code change to
- * ExtractionService — that's the entire point of this file.
+ * Every model any AI-calling feature can be pointed at. This is the *only*
+ * place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`, `@ai-sdk/anthropic`)
+ * gets imported — a feature resolves a model through `resolveModel()` below,
+ * never by importing a provider SDK itself. Swapping the default model is a
+ * one-line change to DEFAULT_MODEL_KEY, not a code change to any caller.
  */
 export const MODEL_REGISTRY = {
-    // Free on Groq; text-only, so images/scanned PDFs must go through local OCR.
+    // Free on Groq; text-only.
     'groq:compound-mini': {
         provider: 'groq',
         modelId: 'groq/compound-mini',
@@ -106,26 +108,4 @@ export function resolveModel(key: ModelKey, apiKeyOverride?: string): LanguageMo
                 apiKey: apiKeyOverride ?? process.env.OPENROUTER_API_KEY,
             }).chat(descriptor.modelId);
     }
-}
-
-// ── Processing mode ──────────────────────────────────────────────────────────
-
-/**
- * How images and scanned PDF pages get read:
- *  - 'vision': sent as image content parts to a vision-capable model.
- *    Better on messy/handwritten/angled scans; default because the default
- *    OpenRouter model is vision-capable and free.
- *  - 'local-ocr': read locally via Tesseract before anything leaves the
- *    server, so the resulting text goes through the same PII-masking
- *    pipeline that already protects typed/pasted text. Use this to switch
- *    to a free text-only Groq model (compound / compound-mini).
- */
-export type ProcessingMode = 'vision' | 'local-ocr';
-
-export const PROCESSING_MODES: readonly ProcessingMode[] = ['vision', 'local-ocr'];
-
-export const DEFAULT_PROCESSING_MODE: ProcessingMode = 'vision';
-
-export function isProcessingMode(value: unknown): value is ProcessingMode {
-    return typeof value === 'string' && (PROCESSING_MODES as readonly string[]).includes(value);
 }

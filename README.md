@@ -1,8 +1,8 @@
-# maintain-agent
+# gridstream-agent
 
-**AI Maintenance Planner for Industry 4.0** — turns maintenance reports into structured machine data, matches best-practice measures, and generates ROI-backed project plans.
+**An event-driven IoT telemetry & Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets** — solar, battery storage, heat pumps, EV wallboxes.
 
-[![CI](https://github.com/m-ahmedbashir/maintain-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/m-ahmedbashir/maintain-agent/actions/workflows/ci.yml)
+[![CI](https://github.com/m-ahmedbashir/gridstream-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/m-ahmedbashir/gridstream-agent/actions/workflows/ci.yml)
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D%2018.0.0-brightgreen.svg)
 ![pnpm](https://img.shields.io/badge/pnpm-%3E%3D%2010.0.0-orange.svg)
@@ -11,149 +11,139 @@
 
 ## Contents
 
-- [Overview](#overview)
-- [How It Works](#-how-it-works)
-- [Features](#-features)
-- [Architecture](#-architecture)
+- [Where this project is right now](#-where-this-project-is-right-now)
+- [Target architecture](#-target-architecture)
+- [Building an AI feature here](#-building-an-ai-feature-here)
 - [Tech Stack](#-tech-stack)
+- [Repo Structure](#-repo-structure)
 - [Getting Started](#%EF%B8%8F-getting-started)
-- [The Magic Inside the Code](#-the-magic-inside-the-code)
 - [Deployment](#-deployment)
 - [Contributing](#-contributing)
-- [Acknowledgments](#-acknowledgments)
 - [License](#-license)
 - [About the Author](#-about-the-author)
 
-## Overview
+## 📍 Where this project is right now
 
-Factories still review maintenance reports and plan retrofits in spreadsheets — slow, error-prone, and impossible to scale. **maintain-agent** automates that step without removing the human: it extracts structured machine data from PDFs, matches best-practice industrial maintenance measures, and generates ROI-backed project plans behind a **Human-in-the-Loop (HITL)** governance layer.
+This repo is mid-pivot. It started as **maintain-agent**, an industrial maintenance-report planner (extract a machine profile from a PDF, match best-practice measures, generate an ROI-backed plan). That domain has been **deliberately and completely removed** — not deprecated, not hidden behind a flag, actually deleted — to make room for a new domain: an event-driven pipeline that ingests live telemetry from green-energy hardware and produces AI-assisted fault diagnostics with a human approving anything consequential before it happens.
 
-Upload a German maintenance report (PDF, image, or pasted text), and the agent uses the **Vercel AI SDK** with a provider-agnostic model registry to extract a machine profile, query a curated measure database, and produce a Zod-validated project plan with German executive summaries for plant managers. Every field carries a six-anchor confidence score, and high-value plans stay in draft until a human approves them.
+**What survived the cleanup, because every future feature needs it regardless of domain:**
+- Clerk authentication on the frontend
+- A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
+- A provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`) — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
+- AES-256-GCM encryption for user-supplied API keys
 
-The repo is a `pnpm` + Turborepo monorepo: a **Next.js** frontend (Clerk auth, maintenance dashboard, chat assistant) and a **NestJS** backend (Prisma/PostgreSQL, extraction and planning pipelines, PII compliance masking). Every push and PR runs a real CI pipeline (typecheck + test across all workspaces) — the badge above reflects the actual current state of `main`, not an aspiration.
+**What doesn't exist yet:** the actual VPP domain. No `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, no ingestion pipeline, no diagnostic agent, no dashboard. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been done stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
 
 ---
 
-## 🔄 How It Works
+## 🎯 Target architecture
 
-What you actually do, and what you get back, from "I have a PDF" to "the retrofit is approved":
+The intended end-to-end flow, once the remaining stages land (tracked in [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md)) — this diagram describes the *plan*, not current behavior:
 
 ```mermaid
 flowchart TD
-    A["📄 Upload a report<br/>PDF, photo/scan, CSV, JSON,<br/>or just paste the text"]
-    --> B["🕵️ Your data gets protected<br/>Emails, phone numbers, IBANs,<br/>card numbers auto-redacted"]
-    --> C["🏭 You get a machine profile card<br/>Type, manufacturer, runtime, issues —<br/>each field flagged with confidence"]
-    --> D["🔎 Click 'Find Measures'<br/>Top 5 relevant fixes/upgrades,<br/>fastest payback first"]
-    --> E["✅ Tick the ones you want<br/>and generate a plan"]
-    --> F["💶 Plan comes back<br/>Cost, savings, payback time, CO2 —<br/>plus a plain-language summary"]
-    --> G{"Auto-approve rule met?<br/>(small + high-confidence)"}
-    G -->|"Yes"| H["🟢 Approved automatically"]
-    G -->|"No — default"| I["🟡 Waiting in your review queue"]
-    I --> J["👤 You click Approve or Reject"]
-    J --> H
-    J --> K["🔴 Rejected"]
-    H --> L["🗂️ Saved to your Plan History"]
-    K --> L
+    A["📡 Telemetry simulator<br/>generates smart-meter readings,<br/>injects periodic anomaly spikes"]
+    --> B["🧵 Redis / BullMQ queue<br/>ingestion pipeline, backpressure-safe"]
+    --> C["🗄️ Interval aggregates<br/>written to PostgreSQL"]
+    --> D{"Safety bounds breached?<br/>(thermal runaway, voltage sag, ...)"}
+    D -->|"No"| C
+    D -->|"Yes"| E["🤖 AI diagnostic agent<br/>generateObject + tool calling,<br/>bound to FaultDiagnosticSchema"]
+    E --> F["📋 FaultDiagnostic created<br/>status: PENDING_APPROVAL"]
+    F --> G["🟡 Active Alerts queue<br/>on the VPP dashboard"]
+    G --> H["👤 Operator reviews and clicks<br/>Approve Dispatch or Reject"]
+    H --> I["🟢 Dispatch approved"]
+    H --> J["🔴 Rejected"]
 
     style A fill:#1d4ed8,color:#fff
     style B fill:#7c3aed,color:#fff
-    style C fill:#7c3aed,color:#fff
-    style D fill:#0891b2,color:#fff
-    style E fill:#0891b2,color:#fff
-    style F fill:#0891b2,color:#fff
+    style C fill:#0891b2,color:#fff
+    style D fill:#b45309,color:#fff
+    style E fill:#15803d,color:#fff
+    style F fill:#15803d,color:#fff
     style G fill:#b45309,color:#fff
-    style H fill:#15803d,color:#fff
-    style I fill:#b45309,color:#fff
-    style J fill:#b45309,color:#fff
-    style K fill:#b91c1c,color:#fff
-    style L fill:#334155,color:#fff
+    style H fill:#b45309,color:#fff
+    style I fill:#15803d,color:#fff
+    style J fill:#b91c1c,color:#fff
 ```
 
-A couple of things that don't show up in the boxes above: you can bring your own Groq/OpenAI/Anthropic API key in Settings instead of using the app's shared free one (encrypted at rest, never shown back to you), there's a chat assistant on the Chat page if you'd rather just ask questions about a machine or plan instead of clicking through the flow above, and a Live Monitoring screen offers a second way into the same flow — a machine's live-detected issues land in the same profile a document upload would, so "Click Find Measures" in step 4 works identically either way.
+The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** Severity thresholds, financial estimates, and pass/fail safety checks are deterministic TypeScript; the model's job is qualitative diagnosis and tool orchestration only.
 
 ---
 
-## 🚀 Features
+## 🧩 Building an AI feature here
 
-### 🟢 Current Features
+This section exists so the folder structure for the next AI-calling feature isn't reinvented from scratch, and so it stays consistent as the codebase grows. It's also documented in [AGENTS.md](AGENTS.md) for coding agents working in this repo — this is the human-readable version.
 
-- **Multimodal extraction for maintenance reports.** Text, CSV, JSON, PDF, and images (PNG/JPEG/WebP) are all accepted. Images can go straight to a vision-capable model (default), or be processed locally via Tesseract OCR on the server before model delivery to ensure local PII masking. PDFs try a text-layer extraction first (`pdf-parse`); if a PDF has no real text — a scanned/image-only document — up to its first 5 pages are rendered to PNGs server-side and either processed via local OCR or sent as separate image blocks through the vision path, depending on the user's selected Processing Mode.
-- **PII masking before anything leaves the server, closing the image-PII gap.** An ordered regex pipeline (IBAN → card → email → VAT → phone) strips sensitive tokens out of any text content *before* it's sent to the model. With Local OCR mode, image pixels are converted to text locally on the server first, allowing the exact same PII-masking pipeline to redact sensitive data before any network request is made. For vision mode, the prompt asks the model to report any visible PII, generating an `imagePiiDetected` warning.
-- **Confidence as six fixed anchors.** The extraction prompt forces exactly `1.0 / 0.8 / 0.6 / 0.4 / 0.2 / 0.0`, each with a written rubric, so a score means the same thing every time.
-- **Industrial maintenance domain models.** Shared Zod schemas (`MachineProfile`, `Measure`, `ProjectPlan`) are consumed by both backend and frontend; `.strict()` rejects hallucinated extra fields.
-- **Measure matching.** Given a machine profile, the backend filters a seeded database of German industrial measures by machine type and minimum runtime, then returns the top 5 fastest-payback measures.
-- **AI-generated project plans.** All financials (investment, savings, payback, CO₂ reduction, confidence) are computed deterministically from the selected measures — the model (the same free OpenRouter default used for extraction) is only asked to write the German executive summary and an English backup, so a malformed model response can never corrupt the plan's numbers. If the model's JSON fails to parse, the raw text is used as a fallback rather than failing the plan.
-- **HITL plan governance.** A per-user `planApprovalMode` setting (`MANUAL_REVIEW` / `AUTO_APPROVE`) gates whether low-investment/high-confidence plans are auto-approved or held for manual review. `POST /maintenance/plans/:id/approve` and `POST /maintenance/plans/:id/reject` log the decision.
-- **Defense-in-depth uploads.** Files are buffered in memory only (never written to disk), and MIME type/size are validated independently at three layers (Multer, the NestJS pipe, and an in-service allowlist) before any processing starts.
-- **Real observability.** Every extraction attempt writes an `ExtractionLog` row. The `/maintenance/stats` endpoint runs Prisma aggregate queries concurrently via `Promise.all` and reports success rate, average confidence, top machine types, OCR usage rate, and vision usage rate.
-- **A provider-agnostic model registry.** Extraction and planning use a small registry (`model-registry.ts`) mapping keys to Groq, OpenAI, or Anthropic, with vision-capability tracking so a text-only model can't silently be sent an image.
-- **BYOK — bring your own provider key, encrypted at rest.** A user can save their own Groq/OpenAI/Anthropic key in Settings instead of using the app's shared one. AES-256-GCM authenticated encryption, with decryption happening server-side immediately before the provider call.
-- **Carbon-aware planning.** Before writing the executive summary, the planner pulls live German grid carbon intensity from [Electricity Maps](https://www.electricitymaps.com) and — when available — asks the model to factor it into scheduling advice (e.g. run energy-intensive work during low-carbon hours). Purely additive: the token is optional, a failed/missing call is silently omitted from the prompt, and the number never touches any computed financial.
-- **Live Monitoring.** A per-machine live-telemetry screen at `/dashboard/maintenance/live` — seeded automatically with demo machines on a new account's first visit, or added manually via a quick 4-field form, so it never requires a document upload first. Readings are explicitly disclosed as simulated (re-baselined from a real public live feed around each machine's own profile, not presented as real sensor data), and any detected anomaly is written straight into that machine's `observedIssues`, so it flows through the exact same Find Measures → Plan pipeline a document-derived issue would.
-- **Demo reports.** Three synthetic German maintenance reports are included in `demo-data/`, both as Markdown source and pre-rendered PDF, for quick end-to-end testing.
+### Start simple, add orchestration only when the task demands it
 
-### 🔵 Roadmap
+Most features in this codebase are, and should stay, a **single augmented call**: a prompt, the tools it needs, and a Zod schema constraining the output. Reach for a multi-step agent loop only when the model genuinely has to decide *which* tools to call and in *what order* for a problem whose steps can't be predicted ahead of time — not by default, and not because a loop looks more sophisticated than a function call. An unnecessary agent loop is more surface area to get wrong for a job a single structured call would already do.
 
-**Near-term:**
-- Fix frontend linting: `next lint` no longer exists as of Next.js 16, and the legacy `.eslintrc.json` also fails under the installed ESLint version.
-- Field-by-field streaming of extraction results into the review card using `useObject`.
-- Multi-step agentic tool loops in the chat assistant.
-- Embeddings over stored machine profiles and plans for semantic search.
+### The folder shape for a new AI-calling module
 
-**Mid-term:**
-- CSV/export reporting and webhook emitter for downstream ERP systems.
-- Fine-grained Clerk permissions (PBAC — who can approve vs. who can only view plans).
-- OpenTelemetry tracing around the extraction and planning pipelines.
-
-**Stretch:**
-- Queue-based batch processing (BullMQ) for bulk report uploads.
-- Docker/devcontainer setup for one-command onboarding.
-
----
-
-## 🏗 Architecture
-
-```text
-maintain-agent/
-├── .github/
-│   ├── workflows/ci.yml        # typecheck + test on every push/PR
-│   ├── ISSUE_TEMPLATE/
-│   └── PULL_REQUEST_TEMPLATE.md
-├── apps/
-│   ├── frontend/       # Next.js app — dashboard, chat assistant, maintenance UI
-│   └── backend/        # NestJS API
-│       └── src/modules/
-│           ├── extraction/           # Generic extraction pipeline (PDF, OCR, vision, model registry)
-│           ├── compliance/           # PII masking
-│           ├── carbon/               # Live grid carbon intensity (Electricity Maps)
-│           ├── telemetry/            # Simulated live machine telemetry + anomaly detection
-│           ├── maintenance/          # Maintenance report extraction, matching, planning
-│           │   ├── maintenance-extraction.service.ts
-│           │   ├── matching.service.ts
-│           │   └── planning.service.ts
-│           └── users/                # Per-user plan approval/model settings
-├── packages/
-│   └── shared/         # @maintain/shared — Zod schemas and shared types
-├── demo-data/        # Synthetic German maintenance reports (Markdown + PDF)
-├── turbo.json           # build/test/typecheck pipeline across all workspaces
-├── LICENSE
-├── CONTRIBUTING.md
-└── CODE_OF_CONDUCT.md
 ```
+apps/api/src/modules/<feature>/
+  <feature>.module.ts
+  <feature>.controller.ts        # HTTP surface only — validates, delegates, shapes the response
+  <feature>.service.ts           # orchestration: builds the prompt, calls generateObject()/tool(), returns the result
+  <feature>.service.spec.ts
+  tools/
+    <tool-name>.tool.ts          # one file per tool: a pure function + its own Zod input schema
+    <tool-name>.tool.spec.ts     # pure functions — test them without ever touching the LLM
+```
+
+The output schema (what the model must return) and any request/response DTOs live in `packages/shared`, not inline in the service — one definition, imported by the backend to bind `generateObject` *and* by the frontend to type whatever renders the result. See [AGENTS.md](AGENTS.md#type-safety--single-source-of-truth-for-schemas) for the full single-source-of-truth rule.
+
+### Rules that don't bend
+
+- **One model registry, always.** `apps/api/src/common/ai/model-registry.ts` is the only place a provider SDK gets imported. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
+- **Structured output, not parsed prose.** `generateObject()`/`tool()` bound directly to a Zod schema. Never `generateText()` plus hand-rolled JSON extraction — that pattern existed in the old domain and was a real source of bugs; it does not come back.
+- **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model — the same discipline you'd put into a public API applies here.
+- **The model never computes a fact.** Financial estimates, severity thresholds, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript. The model writes prose around numbers it's handed, never numbers of its own.
+- **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first. Nothing downstream executes without an explicit human action.
 
 ---
 
 ## 🛠 Tech Stack
 
-- **AI:** Vercel AI SDK 6 via a provider-agnostic model registry — OpenRouter (`nvidia/nemotron-nano-12b-v2-vl:free` free-vision default, used for both extraction and planning), Groq (`compound-mini` free text), OpenAI, and Anthropic wired in and ready to select
-- **Validation:** Zod, `nestjs-zod`
-- **Document parsing:** `pdf-parse` (PDF text-layer extraction + `@napi-rs/canvas` rasterization fallback)
-- **Frontend:** Next.js, `@ai-sdk/react` (`useChat`), Tailwind CSS, shadcn/ui, `react-virtuoso`
-- **Backend:** NestJS, Prisma, PostgreSQL
-- **Auth:** Clerk
-- **Live data:** [Electricity Maps](https://www.electricitymaps.com) (grid carbon intensity), ThingSpeak (public live feed powering simulated machine telemetry)
-- **Industrial maintenance domain models:** `MachineProfile`, `Measure`, `ProjectPlan`
+- **Backend:** NestJS, PostgreSQL via **Drizzle ORM** (`drizzle-orm` + `pg` — not Prisma)
+- **AI:** Vercel AI SDK, routed through a provider-agnostic model registry (Groq, OpenAI, Anthropic, OpenRouter)
+- **Frontend:** Next.js 16 (App Router), Clerk auth, Tailwind CSS, shadcn/ui, TanStack Query
+- **Validation:** Zod, shared between both apps via `packages/shared`
+- **Auth:** Clerk (frontend-only — no backend session/RBAC layer yet)
+- **Security:** AES-256-GCM for user-supplied (BYOK) provider API keys
 - **Workspaces/Tooling:** pnpm, Turborepo, GitHub Actions
+
+---
+
+## 📁 Repo Structure
+
+```text
+gridstream-agent/
+├── .github/
+│   └── workflows/ci.yml        # typecheck + test on every push/PR
+├── apps/
+│   ├── web/                    # Next.js frontend — dashboard shell, Clerk auth, chat assistant
+│   └── api/                    # NestJS backend
+│       ├── drizzle.config.ts     # drizzle-kit config
+│       ├── drizzle/              # generated SQL migrations — append-only
+│       └── src/
+│           ├── common/
+│           │   ├── db/           # Drizzle schema.ts + DbService (pg Pool + Drizzle instance)
+│           │   ├── crypto/       # BYOK AES-256-GCM encryption
+│           │   └── ai/           # model-registry.ts — the only place a provider SDK is imported
+│           └── modules/
+│               └── users/        # Clerk-linked settings, BYOK key management
+├── packages/
+│   └── shared/                  # @maintain/shared — Zod schemas + types, shared by both apps
+├── AGENTS.md                    # rules for any coding agent working in this repo
+├── REFACTOR_PROGRESS.md         # stage-by-stage log of the maintain-agent → gridstream-agent pivot
+├── turbo.json
+├── LICENSE
+├── CONTRIBUTING.md
+└── CODE_OF_CONDUCT.md
+```
+
+For the full set of architectural rules (SOLID conventions, minimal-footprint feature guidelines, the AI-feature folder shape above in agent-facing form) see [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -168,8 +158,8 @@ maintain-agent/
 ### Installation
 
 ```bash
-git clone https://github.com/m-ahmedbashir/maintain-agent.git
-cd maintain-agent
+git clone https://github.com/m-ahmedbashir/gridstream-agent.git
+cd gridstream-agent
 pnpm install
 ```
 
@@ -182,7 +172,7 @@ cd apps/api
 cp .env.example .env
 ```
 
-Set `GROQ_API_KEY` (free, no card required, from [console.groq.com](https://console.groq.com)) and `DATABASE_URL` (your PostgreSQL connection string).
+Set `OPENROUTER_API_KEY` (free, no card required, from [openrouter.ai](https://openrouter.ai)) and `DATABASE_URL` (your PostgreSQL connection string).
 
 **Frontend (`apps/web/.env`):**
 
@@ -196,18 +186,8 @@ Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PU
 ### Database
 
 ```bash
-cd apps/api
-pnpm prisma migrate dev --name add_maintenance_domain
-```
-
-(The Prisma client is also regenerated automatically on every `pnpm install` via a `postinstall` hook — you don't need to run `prisma generate` by hand.)
-
-### Seed Measures
-
-After migrating, insert the curated German industrial maintenance measures:
-
-```bash
-pnpm db:seed
+pnpm db:generate    # generate SQL migrations from apps/api/src/common/db/schema.ts
+pnpm db:migrate      # apply them to DATABASE_URL
 ```
 
 ### Running Locally
@@ -222,69 +202,8 @@ pnpm dev:backend
 ### Running Tests & Typecheck
 
 ```bash
-pnpm test         # all workspaces — same command CI runs
+pnpm test           # all workspaces — same command CI runs
 pnpm run typecheck  # tsc --noEmit across every workspace
-```
-
----
-
-## 🧑‍💻 The Magic Inside the Code
-
-**Extraction — masked text (and/or a raw image) in, a Zod-validated MachineProfile out:**
-
-```typescript
-import { generateObject } from 'ai';
-import { resolveModel, MODEL_REGISTRY, DEFAULT_MODEL_KEY } from './model-registry';
-import { MachineProfileSchema } from '@maintain/shared';
-
-const modelDescriptor = MODEL_REGISTRY[modelKey];
-if (imageBuffer && !modelDescriptor.supportsVision) {
-  throw new Error(`${modelDescriptor.modelId} doesn't support image input`);
-}
-
-// PII is masked before this point — maskedText never contains the raw input
-const { object } = await generateObject({
-  model: resolveModel(modelKey ?? DEFAULT_MODEL_KEY),
-  schema: MachineProfileSchema,
-  messages: [{
-    role: 'user',
-    content: [
-      { type: 'text', text: extractionPrompt },
-      ...(maskedText ? [{ type: 'text', text: maskedText }] : []),
-      ...(imageBuffer ? [{ type: 'image', image: imageBuffer, mimeType }] : []),
-    ],
-  }],
-});
-
-// object is already validated against MachineProfileSchema
-```
-
-**Matching — best-practice measures for the machine:**
-
-```typescript
-const measures = await matchingService.findMeasures(machineProfile);
-// filters by machineType and minRuntimeHours, sorts by paybackMonths, returns top 5
-```
-
-**Planning — ROI-backed project plan with German executive summary:**
-
-```typescript
-const plan = await planningService.generatePlan(machineProfile, selectedMeasures, userId);
-// financials computed deterministically; model only writes the executive summary;
-// persists a Plan row with a real DB id and applies HITL auto-approve rules
-```
-
-**Human-in-the-loop — an agent can propose a plan, but can't execute one without a click:**
-
-```typescript
-const { messages, addToolApprovalResponse, addToolOutput } = useChat({
-  transport: new DefaultChatTransport({ api: '/api/chat' }),
-});
-
-// Approve or reject a drafted plan via dedicated endpoints
-async function onApprove(planId: string) {
-  await fetch(`/maintenance/plans/${planId}/approve`, { method: 'POST' });
-}
 ```
 
 ---
@@ -302,15 +221,14 @@ async function onApprove(planId: string) {
 
 Issues and PRs are genuinely welcome. Before opening one:
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) — it covers setup, the pre-PR checklist (`pnpm run typecheck` + `pnpm test`, the same commands CI runs), and a short list of concrete good-first-issues pulled straight from this README's own Roadmap.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) — it covers setup and the pre-PR checklist (`pnpm run typecheck` + `pnpm test`, the same commands CI runs).
 - This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 - Bug reports and feature requests have templates under `.github/ISSUE_TEMPLATE/`; PRs get a checklist template automatically.
+- Given the repo is mid-pivot, check [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) first — it tracks exactly what exists, what's intentionally gone, and what's still ahead.
 
 ## 🙏 Acknowledgments
 
-The frontend started from [next-shadcn-dashboard-starter](https://github.com/Kiranism/next-shadcn-dashboard-starter) by [Kiranism](https://github.com/Kiranism) (dashboard shell, shadcn/ui setup, auth scaffolding) — since substantially extended with the maintenance extraction pipeline, chat assistant, and review UI described above.
-
-Built with Vercel AI SDK, Zod, and Human-in-the-Loop governance patterns.
+The frontend started from [next-shadcn-dashboard-starter](https://github.com/Kiranism/next-shadcn-dashboard-starter) by [Kiranism](https://github.com/Kiranism) (dashboard shell, shadcn/ui setup, auth scaffolding).
 
 ## 📄 License
 
@@ -320,10 +238,8 @@ Built with Vercel AI SDK, Zod, and Human-in-the-Loop governance patterns.
 
 Built by **Ahmed Bashir** — a full-stack engineer working across TypeScript, React, and Node.js, currently based in Bielefeld, Germany, and studying Intelligent Interactive Systems (AI/NLP focus) at Bielefeld University.
 
-This repo is the most complete example of how I think about shipping AI-agent features: type safety at the boundary, a human in the loop on anything consequential, and a habit of finding and fixing my own gaps.
-
 - GitHub: [github.com/m-ahmedbashir](https://github.com/m-ahmedbashir)
-- Project: [github.com/m-ahmedbashir/maintain-agent](https://github.com/m-ahmedbashir/maintain-agent)
+- Project: [github.com/m-ahmedbashir/gridstream-agent](https://github.com/m-ahmedbashir/gridstream-agent)
 - LinkedIn: [linkedin.com/in/ahmed-bashir-2118651aa](https://www.linkedin.com/in/ahmed-bashir-2118651aa/)
 
 Questions, feedback, or a role you think this'd be a good fit for — open an issue, or reach out directly.
