@@ -438,6 +438,16 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
         }
     }
 
+    // Observed on free OpenRouter models under load: the HTTP call returns 200 but the
+    // body is empty/keep-alive-only, and the SDK's own retry logic doesn't cover this
+    // (from its perspective the request "succeeded"; only our JSON parse afterwards
+    // fails). Without a timeout that hangs for minutes before failing anyway — see
+    // model-registry.ts's note on this same free-tier behavior. A short timeout plus
+    // one app-level retry turns a guaranteed ~2-minute failure into a fast retry that
+    // usually lands on a healthy response.
+    private static readonly MODEL_CALL_TIMEOUT_MS = 45_000;
+    private static readonly MODEL_CALL_MAX_ATTEMPTS = 2;
+
     private async callModel(
         sanitisedText: string,
         mimeType: string,
@@ -462,24 +472,39 @@ IMAGE PII CHECK — only relevant when one or more images were provided:
             content.push({ type: 'image', image: buffer, mimeType });
         }
 
-        const { text } = await generateText({
-            model: resolveModel(modelKey, apiKeyOverride),
-            messages: [{ role: 'user', content }],
-        });
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= MaintenanceExtractionService.MODEL_CALL_MAX_ATTEMPTS; attempt++) {
+            try {
+                const { text } = await generateText({
+                    model: resolveModel(modelKey, apiKeyOverride),
+                    messages: [{ role: 'user', content }],
+                    timeout: MaintenanceExtractionService.MODEL_CALL_TIMEOUT_MS,
+                });
 
-        const cleaned = this.extractJson(text);
-        const parsed = this.repairModelResponse(JSON.parse(cleaned));
-        const validated = MaintenanceExtractionService.RESPONSE_SCHEMA.parse(parsed) as {
-            data: MachineProfile;
-            confidence: MachineProfileConfidence;
-            imagePiiDetected: boolean;
-        };
+                const cleaned = this.extractJson(text);
+                const parsed = this.repairModelResponse(JSON.parse(cleaned));
+                const validated = MaintenanceExtractionService.RESPONSE_SCHEMA.parse(parsed) as {
+                    data: MachineProfile;
+                    confidence: MachineProfileConfidence;
+                    imagePiiDetected: boolean;
+                };
 
-        return {
-            data: validated.data,
-            confidence: validated.confidence,
-            imagePiiDetected: (buffers?.length ?? 0) > 0 && validated.imagePiiDetected,
-        };
+                return {
+                    data: validated.data,
+                    confidence: validated.confidence,
+                    imagePiiDetected: (buffers?.length ?? 0) > 0 && validated.imagePiiDetected,
+                };
+            } catch (error) {
+                lastError = error;
+                const isLastAttempt = attempt === MaintenanceExtractionService.MODEL_CALL_MAX_ATTEMPTS;
+                this.logger.warn(
+                    `Model call attempt ${attempt}/${MaintenanceExtractionService.MODEL_CALL_MAX_ATTEMPTS} failed` +
+                    `${isLastAttempt ? '' : ' — retrying'}: ${error instanceof Error ? error.message : 'unknown error'}`,
+                );
+            }
+        }
+
+        throw lastError;
     }
 
     /**
