@@ -2,21 +2,27 @@
 
 Instructions for any AI coding agent working in this repository. Read before touching code. If this conflicts with what you observe in the repo, the repo wins — update this file, don't silently ignore it.
 
-Standing rules — apply to every future file. For what's actually built and verified right now, and which pivot stage the codebase is in, see [REFACTOR_PROGRESS.md](./REFACTOR_PROGRESS.md); don't assume something exists just because a rule here describes how it _should_ behave once the pivot lands.
-
 ## What this is
 
-`gridstream-agent` (mid-pivot from `maintain-agent`) — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js dashboard (`apps/web`), sharing Zod domain schemas via `packages/shared` (renaming to `packages/ai-config`/`@repo/ai-config` in Stage 2, see REFACTOR_PROGRESS.md). Prisma + PostgreSQL is the only persistence layer — no Drizzle, no Redis/BullMQ yet (Stage 4 introduces the queue).
+`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod domain schemas via `packages/shared` (`@maintain/shared`). Prisma + PostgreSQL is the only persistence layer.
 
-Being refactored, stage by stage, from an industrial-maintenance report planner into an event-driven IoT telemetry / Virtual Power Plant diagnostic pipeline (solar, battery storage, heat pumps, EV wallboxes). Until that pivot completes, most business logic below still describes the *maintenance* domain (`MachineProfile`/`Measure`/`ProjectPlan`) — check REFACTOR_PROGRESS.md's stage table before assuming a VPP concept (`DeviceAsset`, `TelemetryLog`, `FaultDiagnostic`) exists yet.
+The domain currently implemented is industrial maintenance-report planning: a technician uploads a report, the AI SDK extracts a structured `MachineProfile`, a matching service proposes `Measure`s, and a planning service produces an ROI-backed `ProjectPlan` that a human approves/rejects (HITL). See `goal.md` and `README.md` for the full product framing.
 
-## Ground rule: don't scaffold ahead of the current stage
+## Architecture & SOLID principles
 
-The pivot plan is explicitly staged (Stage 1 audit → Stage 2 renaming → Stage 3 schema → Stage 4 ingestion/queue → Stage 5 AI agent → Stage 6 dashboard → Stage 7 docs/cleanup), and each stage must typecheck/build clean before the next starts.
+- **Delivery layer** (`apps/api/src/modules/*/*.controller.ts`, `apps/web/src/app/**`) — receive the request, validate shape, call a service, shape the response. No business logic in a controller or a page component.
+- **Domain/business logic** (`apps/api/src/modules/*/*.service.ts`) — the actual rules (extraction, matching, financial math). Framework-agnostic where possible; a service takes plain data in, returns plain data out.
+- **Infrastructure** (`apps/api/src/common/prisma/`, `apps/api/src/common/crypto/`, `packages/shared`) — DB client, encryption, and the Zod schemas both apps depend on.
 
-- Don't build a later stage's plumbing "while you're in there" — e.g. don't add BullMQ (Stage 4) while still doing Stage 2 renames, don't invent `DeviceAsset` (Stage 3) before the Prisma migration for it exists.
-- Check REFACTOR_PROGRESS.md's status table before adding a new module — if a stage is marked not started, its target files don't exist yet; don't half-build them early.
-- Verify what you built actually runs (`pnpm typecheck`, and for backend/frontend changes, boot the relevant app) before moving on.
+SOLID at the file level, as you write, not as a retrofit:
+
+- **SRP** — a controller routes, a service holds business logic, a `*.service.spec.ts` tests it. `MaintenanceController` (`apps/api/src/modules/maintenance/maintenance.controller.ts`) delegates every real decision to `MaintenanceExtractionService`/`MatchingService`/`PlanningService` — it never computes anything itself. Two reasons to change in one file means split it.
+- **OCP** — a new feature is a new module (`*.controller.ts` + `*.module.ts` + `*.service.ts`), not an edit inside an unrelated one. Registering the new module in `app.module.ts`'s `imports` array is the accepted one-line exception.
+- **LSP** — the model-provider abstraction (`apps/api/src/modules/extraction/model-registry.ts`) is the reference: `resolveModel(key, apiKeyOverride?)` returns a `LanguageModel` regardless of whether the key resolves to Groq, OpenAI, Anthropic, or OpenRouter — callers never branch on provider. Don't bake a single-provider assumption into a service that's meant to work with any registry entry.
+- **ISP** — request DTOs are precise per-endpoint, never one shared blob. `maintenance.controller.ts` defines `ExtractMaintenanceDto`, `CreateMachineDto`, and `GeneratePlanDto` as separate small classes rather than one `MaintenanceRequestDto` with mostly-unused optional fields — follow that shape for new endpoints.
+- **DIP** — NestJS constructor injection throughout; a service depends on `PrismaService`/other injected services, never `new`s up its own collaborator. Accepted exception: `model-registry.ts`'s `resolveModel`/`getModelDescriptor` are plain exported functions, not injectable services — fine, since they're pure (registry lookup) or read only `process.env` at call time, with no state and no side effect worth mocking in tests.
+
+**Resilience convention — optional external calls must never throw.** Any call to a third-party API that's *decorative* (i.e. the app has a well-defined fallback if it's unavailable) returns `null`/`[]` on any failure and logs a warning instead of propagating — never let it break the request it's enriching. `CarbonIntensityService.getLatest()` (returns `null` if the token is missing, the request fails, or the shape is wrong) and `ThingSpeakDemoFeedService.fetchRecent()` (returns `[]` on any failure) are the two reference implementations; follow this shape for any new "nice-to-have" data source. This is different from a *required* external call (e.g. the model provider call in `MaintenanceExtractionService.callModel()`), which does propagate its error — because there's no meaningful fallback for "the extraction failed."
 
 ## Structure
 
@@ -30,10 +36,10 @@ apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/app/                    routes (App Router, incl. parallel routes under dashboard/overview)
   src/features/<feature>/     feature-scoped components + TanStack Query hooks (use-*.ts)
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
-  __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain; candidate for deletion in Stage 7
+  __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
 
 packages/shared/            Zod domain schemas + types, imported by both apps as `@maintain/shared`
-  src/schemas/                 e.g. maintenance.schema.ts (current), will gain VPP schemas in Stage 3
+  src/schemas/                 maintenance.schema.ts, document-response.schema.ts
 ```
 
 Rules from this layout:
@@ -50,18 +56,18 @@ Rules from this layout:
 ## AI SDK usage (Vercel AI SDK)
 
 - Model access goes through the provider-agnostic registry (`apps/api/src/modules/extraction/model-registry.ts`) — a keyed map of provider/model/vision-capability, resolved via `resolveModel(key, apiKeyOverride?)`. Add a new model by adding a registry entry, never by hardcoding a provider SDK call in a service.
-- **Current pattern (pre-Stage-5): `generateText()` + hand-rolled JSON extraction/repair, validated against a Zod schema after the fact** (see `MaintenanceExtractionService.callModel()`, `PlanningService.generatePlan()`). This is a known deviation from the target pattern below — don't copy it into new code without checking whether Stage 5 has landed yet.
-- **Target pattern (Stage 5 onward): `generateObject()`/`tool()` bound directly to a Zod schema** — no manual JSON parsing, no hallucination-prone free-text financial figures. All financial estimates and hardware-threshold evaluations must be computed deterministically in TypeScript, never asked of the model; the model's role is strictly qualitative diagnostics + tool-execution loops.
+- Current extraction/planning code uses `generateText()` plus hand-rolled JSON extraction/repair (`extractJson`, `repairModelResponse` in `MaintenanceExtractionService`), validated against a Zod schema after the fact. For new AI-calling code, prefer `generateObject()`/`tool()` bound directly to a Zod schema instead — no manual JSON parsing, and it removes an entire class of malformed-response bugs the repair logic exists to patch around.
+- All financial estimates and numeric thresholds must be computed deterministically in TypeScript (see `PlanningService.generatePlan` — investment/savings/payback are summed from `Measure` rows, the model only ever writes the prose executive summary around numbers it's given, never numbers of its own). Never let the model produce a number that gets persisted or shown as fact.
 - BYOK: a user's own provider API key, AES-256-GCM encrypted at rest (`apps/api/src/common/crypto/`), decrypted only at call time and never logged — see `UsersService.getDecryptedApiKey`.
 
 ## Auth
 
-Clerk, on the frontend (`apps/web`) only — no backend session/RBAC system, no Postgres RLS. The backend trusts a `userId`/`clerkId` passed from the frontend and upserts a `User` row on first sight (see `MaintenanceController.listMachines`'s `prisma.user.upsert` pattern) rather than validating a session itself. If backend-side auth verification is ever added, it doesn't exist yet — don't assume a guard or middleware is already enforcing it.
+Clerk, on the frontend (`apps/web`) only — no backend session/RBAC system, no Postgres RLS. The backend trusts a `userId`/`clerkId` passed from the frontend and upserts a `User` row on first sight (see `MaintenanceController.listMachines`'s `prisma.user.upsert` pattern) rather than validating a session itself. Don't assume a guard or middleware is enforcing auth on the backend — none exists yet.
 
 ## Environment & running things
 
 - Package manager is **pnpm** (`pnpm@10.30.3`) — don't use npm/yarn.
-- `pnpm dev` (root) runs both apps in parallel via Turborepo. `pnpm --filter @maintain/backend dev` / `pnpm --filter @maintain/frontend dev` run one at a time. (Package *names* are still `@maintain/backend`/`@maintain/frontend` — only the `apps/api`/`apps/web` directory paths were renamed so far; renaming the package names themselves is a separate, not-yet-made decision, see REFACTOR_PROGRESS.md.)
+- `pnpm dev` (root) runs both apps in parallel via Turborepo. `pnpm --filter @maintain/backend dev` / `pnpm --filter @maintain/frontend dev` run one at a time.
 - Backend env: `apps/api/.env` (copy from `apps/api/.env.example`) — needs at minimum `DATABASE_URL` and one model provider key (`OPENROUTER_API_KEY` is the free default).
 - Frontend env: `apps/web/.env` (copy from `apps/web/env.example.txt`) — Clerk keys optional in dev (keyless mode).
 - `pnpm build` / `pnpm test` / `pnpm typecheck` / `pnpm lint` (root) all fan out via Turborepo to every package — run these, not a per-package script, when verifying a cross-cutting change.
@@ -70,4 +76,3 @@ Clerk, on the frontend (`apps/web`) only — no backend session/RBAC system, no 
 
 - Backend: Railway, via `pnpm build --filter=@maintain/backend`.
 - Frontend: Vercel, via `pnpm build --filter=@maintain/frontend`.
-- If Railway/Vercel dashboard "root directory" settings still point at the pre-rename `apps/backend`/`apps/frontend` paths, that's a manual dashboard fix outside this repo — not something a migration here can reach.
