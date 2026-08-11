@@ -48,10 +48,15 @@ Rules from this layout:
 - A domain type is defined once, in `packages/shared`, and inferred everywhere else via `z.infer<typeof Schema>` — never hand-write a duplicate interface in `apps/api` or `apps/web`.
 - Prisma's `schema.prisma` is the only place table shapes are defined; a service reads/writes through `PrismaService`, never raw SQL, unless a migration genuinely needs it.
 
-## Type safety
+## Type safety & single source of truth for schemas
 
-- Never hand-write a type duplicating a Prisma model or a `packages/shared` Zod schema — derive it (`z.infer<typeof X>`, or Prisma's generated `Prisma.XGetPayload<...>` for a query result shape).
-- New request/response schemas go in `packages/shared/src/schemas/`, not inline in a controller — both apps need them, and inline duplicates drift.
+A shape gets defined **once**, in `packages/shared`, and both apps import that same definition — never redeclared per-consumer. Concretely:
+
+- **Define once:** a new request or response shape is a Zod schema added to `packages/shared/src/schemas/`, exported from `packages/shared/src/index.ts`. Not inline in a controller, not inline in a frontend hook.
+- **Backend reuses it for everything:** the same schema validates the incoming request, binds the AI SDK call (`generateObject`/`buildResponseSchema`), and — via `z.infer<typeof Schema>` — becomes the service's parameter/return type. One definition, three jobs, never three separate hand-written types that can drift apart.
+- **Frontend reuses the identical import:** a TanStack Query hook's return type is `z.infer<typeof Schema>` imported from `@maintain/shared`, not a hand-typed `interface` that happens to look the same today. If the shape also needs client-side form validation, pass the same schema straight to `zodResolver()` (already a dependency) instead of writing a parallel Yup/manual-validation version.
+- **Known violation to not repeat:** `apps/web/src/features/maintenance/use-extract-maintenance.ts:6-21` hand-declares a local `MaintenanceExtractionResult` interface that duplicates the shape `MaintenanceExtractionService` already returns from the backend (`apps/api/src/modules/maintenance/maintenance-extraction.service.ts`). It should be one Zod schema in `packages/shared`, imported on both sides. Don't copy this pattern into new code; fix it in place if you're touching that file anyway.
+- Never hand-write a type duplicating a Prisma model either — derive it (`Prisma.XGetPayload<...>` for a query-result shape).
 
 ## AI SDK usage (Vercel AI SDK)
 
