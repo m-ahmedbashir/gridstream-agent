@@ -161,6 +161,95 @@ export async function seedMeasures(prisma: PrismaClient): Promise<void> {
         { phase: 'Re-verification', durationDays: 1, responsibleRole: 'Energy consultant', description: 'Re-scan repaired points and quantify savings.' },
       ],
     },
+    // The six type-specific measures above only cover 1–3 machine types each, so no
+    // machine type reaches the "top 5" the UI promises — "Other" in particular only
+    // matched one measure. These five are deliberately generic Industry 4.0 practices
+    // that legitimately apply across every machine type, closing that gap everywhere.
+    {
+      category: 'predictive',
+      title: 'Condition-based monitoring rollout',
+      titleDe: 'Zustandsüberwachung Rollout',
+      description:
+        'Install basic vibration and temperature sensors with threshold alerting to catch degradation before failure.',
+      applicableMachineTypes: ['CNC', 'HVAC', 'Compressor', 'Pump', 'Conveyor', 'Other'],
+      typicalInvestment: 4000,
+      typicalAnnualSavings: 9000,
+      paybackMonths: 5,
+      co2ReductionKg: 600,
+      tasks: [
+        { phase: 'Sensor selection', durationDays: 1, responsibleRole: 'Maintenance engineer', description: 'Identify monitoring points and select vibration/temperature sensors.' },
+        { phase: 'Installation', durationDays: 2, responsibleRole: 'Maintenance technician', description: 'Mount sensors and wire into the monitoring system.' },
+        { phase: 'Baseline & alerting', durationDays: 1, responsibleRole: 'Maintenance engineer', description: 'Record baseline readings and configure alert thresholds.' },
+      ],
+    },
+    {
+      category: 'energy',
+      title: 'Energy sub-metering installation',
+      titleDe: 'Energie-Unterzählung Installation',
+      description:
+        'Install a dedicated sub-meter on the machine to expose its real energy cost and flag abnormal consumption.',
+      applicableMachineTypes: ['CNC', 'HVAC', 'Compressor', 'Pump', 'Conveyor', 'Other'],
+      typicalInvestment: 3200,
+      typicalAnnualSavings: 5000,
+      paybackMonths: 8,
+      co2ReductionKg: 400,
+      tasks: [
+        { phase: 'Metering plan', durationDays: 1, responsibleRole: 'Energy consultant', description: 'Confirm connection point and metering requirements.' },
+        { phase: 'Meter installation', durationDays: 1, responsibleRole: 'Electrician', description: 'Install sub-meter and connect to the building energy dashboard.' },
+        { phase: 'Baseline reporting', durationDays: 1, responsibleRole: 'Energy consultant', description: 'Establish a consumption baseline and flag anomalies going forward.' },
+      ],
+    },
+    {
+      category: 'efficiency',
+      title: 'Route-based lubrication programme',
+      titleDe: 'Routenbasiertes Schmierprogramm',
+      description:
+        'Replace ad-hoc lubrication with a scheduled route covering all bearings, gears, and moving parts.',
+      applicableMachineTypes: ['CNC', 'HVAC', 'Compressor', 'Pump', 'Conveyor', 'Other'],
+      typicalInvestment: 1800,
+      typicalAnnualSavings: 4000,
+      paybackMonths: 5,
+      co2ReductionKg: 150,
+      tasks: [
+        { phase: 'Lubrication audit', durationDays: 1, responsibleRole: 'Maintenance technician', description: 'Catalogue lubrication points, intervals, and specified lubricants.' },
+        { phase: 'Route setup', durationDays: 1, responsibleRole: 'Maintenance planner', description: 'Build a scheduled lubrication route and checklist.' },
+        { phase: 'First round & review', durationDays: 1, responsibleRole: 'Maintenance technician', description: 'Execute the first route and adjust intervals based on findings.' },
+      ],
+    },
+    {
+      category: 'safety',
+      title: 'Machine guarding & interlock audit',
+      titleDe: 'Schutzeinrichtungs- und Verriegelungsaudit',
+      description:
+        'Audit physical guards, light curtains, and safety interlocks against current machinery safety regulations.',
+      applicableMachineTypes: ['CNC', 'HVAC', 'Compressor', 'Pump', 'Conveyor', 'Other'],
+      typicalInvestment: 2600,
+      typicalAnnualSavings: 2000,
+      paybackMonths: 16,
+      co2ReductionKg: 0,
+      tasks: [
+        { phase: 'Guard inspection', durationDays: 1, responsibleRole: 'Safety officer', description: 'Check physical guards and light curtains against the risk assessment.' },
+        { phase: 'Interlock testing', durationDays: 1, responsibleRole: 'Maintenance technician', description: 'Verify safety interlocks trigger correctly and fail safe.' },
+        { phase: 'Documentation', durationDays: 1, responsibleRole: 'Safety officer', description: 'Update the risk assessment and close out any findings.' },
+      ],
+    },
+    {
+      category: 'predictive',
+      title: 'Thermal imaging survey',
+      titleDe: 'Thermografie-Untersuchung',
+      description:
+        'Infrared scan of electrical connections, bearings, and motors to catch overheating before it causes a failure.',
+      applicableMachineTypes: ['CNC', 'HVAC', 'Compressor', 'Pump', 'Conveyor', 'Other'],
+      typicalInvestment: 1500,
+      typicalAnnualSavings: 3600,
+      paybackMonths: 5,
+      co2ReductionKg: 300,
+      tasks: [
+        { phase: 'Thermal scan', durationDays: 1, responsibleRole: 'Energy consultant', description: 'Scan electrical panels, motors, and bearings with an infrared camera.' },
+        { phase: 'Findings triage', durationDays: 1, responsibleRole: 'Maintenance engineer', description: 'Prioritise hot spots by severity and schedule corrective work.' },
+        { phase: 'Corrective action', durationDays: 1, responsibleRole: 'Maintenance technician', description: 'Resolve loose connections or worn components identified in the scan.' },
+      ],
+    },
   ];
 
   // Idempotent seed: find by German title, then create or update.
