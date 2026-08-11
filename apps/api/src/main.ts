@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
+import { sql } from 'drizzle-orm';
 import { AppModule } from './app.module';
-import { PrismaService } from './common/prisma/prisma.service';
+import { DbService } from './common/db/db.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -9,9 +10,9 @@ async function bootstrap() {
   app.enableCors();
 
   // 2. Test database connection
-  const prisma = app.get(PrismaService);
+  const dbService = app.get(DbService);
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await dbService.db.execute(sql`SELECT 1`);
     console.log('✅ Database connection verified');
   } catch (error) {
     console.error('❌ Database connection failed:', error);

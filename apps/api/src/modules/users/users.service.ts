@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { PrismaService } from '../../common/prisma/prisma.service';
+import { eq } from 'drizzle-orm';
+import { DbService } from '../../common/db/db.service';
+import { users } from '../../common/db/schema';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 import {
   DEFAULT_MODEL_KEY,
@@ -26,7 +28,7 @@ export interface SettingsUpdate {
 @Injectable()
 export class UsersService {
   constructor(
-    private prisma: PrismaService,
+    private dbService: DbService,
     private encryptionService: EncryptionService,
   ) {}
 
@@ -36,10 +38,16 @@ export class UsersService {
    * key is write-only from the API's perspective once saved.
    */
   async getSettings(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { clerkId: userId },
-      select: { planApprovalMode: true, modelKey: true, processingMode: true, encryptedApiKey: true },
-    });
+    const [user] = await this.dbService.db
+      .select({
+        planApprovalMode: users.planApprovalMode,
+        modelKey: users.modelKey,
+        processingMode: users.processingMode,
+        encryptedApiKey: users.encryptedApiKey,
+      })
+      .from(users)
+      .where(eq(users.clerkId, userId))
+      .limit(1);
 
     return {
       planApprovalMode: user?.planApprovalMode || 'MANUAL_REVIEW',
@@ -68,25 +76,34 @@ export class UsersService {
         ? null
         : this.encryptionService.encrypt(updates.apiKey);
 
-    // Create user if doesn't exist, then update — only touching the fields actually
-    // provided, so changing one setting never silently resets the others to a default.
-    const user = await this.prisma.user.upsert({
-      where: { clerkId: userId },
-      create: {
+    // Only touching the fields actually provided, so changing one setting
+    // never silently resets the others to a default. `updatedAt` is always
+    // stamped explicitly — Drizzle's onConflictDoUpdate needs a non-empty
+    // `set`, and this also gives us the same "touched now" semantics Prisma's
+    // `@updatedAt` gave us automatically.
+    const updateSet: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
+    if (updates.planApprovalMode !== undefined) updateSet.planApprovalMode = updates.planApprovalMode;
+    if (updates.modelKey !== undefined) updateSet.modelKey = updates.modelKey;
+    if (updates.processingMode !== undefined) updateSet.processingMode = updates.processingMode;
+    if (encryptedApiKey !== undefined) updateSet.encryptedApiKey = encryptedApiKey;
+
+    const [user] = await this.dbService.db
+      .insert(users)
+      .values({
         clerkId: userId,
         planApprovalMode: updates.planApprovalMode ?? 'MANUAL_REVIEW',
         modelKey: (updates.modelKey as ModelKey) ?? DEFAULT_MODEL_KEY,
         processingMode: updates.processingMode ?? DEFAULT_PROCESSING_MODE,
         ...(encryptedApiKey !== undefined && { encryptedApiKey }),
-      },
-      update: {
-        ...(updates.planApprovalMode !== undefined && { planApprovalMode: updates.planApprovalMode }),
-        ...(updates.modelKey !== undefined && { modelKey: updates.modelKey }),
-        ...(updates.processingMode !== undefined && { processingMode: updates.processingMode }),
-        ...(encryptedApiKey !== undefined && { encryptedApiKey }),
-      },
-      select: { planApprovalMode: true, modelKey: true, processingMode: true, updatedAt: true, encryptedApiKey: true },
-    });
+      })
+      .onConflictDoUpdate({ target: users.clerkId, set: updateSet })
+      .returning({
+        planApprovalMode: users.planApprovalMode,
+        modelKey: users.modelKey,
+        processingMode: users.processingMode,
+        updatedAt: users.updatedAt,
+        encryptedApiKey: users.encryptedApiKey,
+      });
 
     // Never let the encrypted value (let alone a plaintext one) leave this method.
     return {
@@ -106,10 +123,11 @@ export class UsersService {
    * callers can fall back to the app's shared key.
    */
   async getDecryptedApiKey(userId: string): Promise<string | undefined> {
-    const user = await this.prisma.user.findUnique({
-      where: { clerkId: userId },
-      select: { encryptedApiKey: true },
-    });
+    const [user] = await this.dbService.db
+      .select({ encryptedApiKey: users.encryptedApiKey })
+      .from(users)
+      .where(eq(users.clerkId, userId))
+      .limit(1);
 
     if (!user?.encryptedApiKey) {
       return undefined;

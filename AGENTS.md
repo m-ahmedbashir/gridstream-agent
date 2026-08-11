@@ -4,7 +4,7 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 ## What this is
 
-`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@maintain/shared`). PostgreSQL is the persistence layer.
+`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@maintain/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`).
 
 Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for what's built so far and what's next.
 
@@ -25,6 +25,32 @@ SOLID at the file level, as you write, not as a retrofit:
 - **DIP** — NestJS constructor injection throughout; a service depends on injected services, never `new`s up its own collaborator. Accepted exception: `model-registry.ts`'s `resolveModel`/`getModelDescriptor` are plain exported functions, not injectable services — fine, since they're pure or read only `process.env` at call time, with no state worth mocking.
 
 **Resilience convention — optional external calls must never throw.** A call to a third-party API that's *decorative* (the app has a well-defined fallback if it's unavailable) returns `null`/`[]` on failure and logs a warning, never propagates. A *required* call (e.g. the model provider call behind `resolveModel()`) does propagate its error — there's no meaningful fallback for "the call failed."
+
+## Structure
+
+```
+apps/api/                  NestJS backend (deployed to Railway)
+  src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts
+  src/common/db/              Drizzle: schema.ts (table defs), db.service.ts (pg Pool + Drizzle instance)
+  src/common/crypto/          BYOK AES-256-GCM encryption
+  drizzle.config.ts           drizzle-kit config (schema path, migration output dir)
+  drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
+
+apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
+  src/app/                    routes (App Router, incl. parallel routes under dashboard/overview)
+  src/features/<feature>/     feature-scoped components + TanStack Query hooks (use-*.ts)
+  src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
+  __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
+
+packages/shared/            Zod domain schemas + types, imported by both apps as `@maintain/shared`
+  src/schemas/                 currently empty — add new domain schemas here as they're built
+```
+
+Rules from this layout:
+
+- `packages/shared` never imports from `apps/api` or `apps/web` — it's plain Zod/TS, must stay usable from either app or a script.
+- A domain type is defined once, in `packages/shared`, and inferred everywhere else via `z.infer<typeof Schema>` — never hand-write a duplicate interface.
+- `src/common/db/schema.ts` is the only place table shapes are defined; a service reads/writes through the Drizzle instance on `DbService`, never raw SQL, unless a migration genuinely needs it. A row type is `typeof table.$inferSelect` / `typeof table.$inferInsert`, never hand-duplicated.
 
 ## Adding a new feature — minimal footprint
 

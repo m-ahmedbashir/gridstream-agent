@@ -11,7 +11,8 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "db:seed": "pnpm --filter @maintain/backend db:seed"
+    "db:generate": "pnpm --filter @maintain/backend db:generate",
+    "db:migrate": "pnpm --filter @maintain/backend db:migrate"
   },
   "keywords": [],
   "author": "Ahmed Bashir",

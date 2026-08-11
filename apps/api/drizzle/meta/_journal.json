@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786491205501,
+      "tag": "0000_ambiguous_makkari",
+      "breakpoints": true
+    }
+  ]
+}

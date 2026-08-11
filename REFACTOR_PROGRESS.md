@@ -198,3 +198,96 @@ untouched (that pivot is a separate, more deliberate future task — see Stage 3
 `apps/api/prisma/schema.prisma` and `prisma/migrations/` still describe the old
 `MachineProfile`/`MachineReading`/`Measure`/`Plan` domain — the `DeviceAsset`/`TelemetryLog`/
 `FaultDiagnostic` pivot is Stage 3, a separate and more deliberate task, deferred as instructed.
+
+---
+
+## 2026-08-12 — Prisma → Drizzle ORM swap
+
+Explicit decision, ahead of Stage 3: the persistence layer moves from Prisma to
+Drizzle ORM before the domain schema pivot happens, so Stage 3 writes the
+`DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` schema directly in Drizzle rather than
+in Prisma-then-migrate-again. Scoped tightly because the maintenance-domain cleanup
+above already shrank Prisma's actual footprint to six files total (`app.module.ts`,
+`main.ts`, `common/prisma/*`, `users.module.ts`, `users.service.ts`) plus their specs.
+
+### What changed
+
+- Deleted `apps/api/prisma/` entirely — `schema.prisma`, all migrations, `seed.ts`.
+  The old schema still had now-orphaned `ExtractionLog`/`MachineProfile`/
+  `MachineReading`/`Measure`/`Plan` models (nothing in the app referenced them after
+  the earlier cleanup) — none of those were ported forward; only `User`, the one
+  model actually still in use, moved to Drizzle.
+- `apps/api/src/common/prisma/` → `apps/api/src/common/db/`: `schema.ts` (the
+  Drizzle table def), `db.service.ts` (`DbService`, a `pg.Pool` + Drizzle instance
+  with the same `OnModuleInit`/`OnModuleDestroy` lifecycle `PrismaService` had),
+  `db.module.ts` (`DbModule`, same shape as the old `PrismaModule`).
+- `users.service.ts` rewritten from Prisma's `findUnique`/`upsert` calls to Drizzle's
+  `select().from().where().limit()` / `insert().values().onConflictDoUpdate().returning()`.
+  One deliberate behavior addition: `updateSettings`'s `set` object now always
+  includes `updatedAt: new Date()` explicitly — Drizzle's `onConflictDoUpdate`
+  needs a non-empty `set`, and this doubles as the same "touched now" semantics
+  Prisma's `@updatedAt` gave for free.
+- `app.module.ts`, `main.ts`, `users.module.ts` updated to import `DbService`/
+  `DbModule` instead of `PrismaService`/`PrismaModule`. `main.ts`'s startup DB
+  health-check changed from `prisma.$queryRaw\`SELECT 1\`` to
+  `dbService.db.execute(sql\`SELECT 1\`)`.
+- `users.service.spec.ts` rewritten with a hand-built mock of Drizzle's fluent
+  query builder (chainable `select/from/where/limit` and
+  `insert/values/onConflictDoUpdate/returning`) instead of a Prisma-shaped mock.
+  All 25 assertions carried forward with equivalent coverage.
+- `apps/api/package.json`: removed `@prisma/client`, `prisma`, the `postinstall:
+  prisma generate` script, and the `prisma.seed`/`db:seed` config. Added
+  `drizzle-orm`, `pg`, `@types/pg` (dep), `drizzle-kit` (devDep), and
+  `db:generate`/`db:migrate` scripts (`drizzle-kit generate` / `drizzle-kit
+  migrate`). Root `package.json`'s `db:seed` script (now dangling) replaced with
+  `db:generate`/`db:migrate` passthroughs.
+- Added `apps/api/drizzle.config.ts` (schema path, migration output dir
+  `./drizzle`, reads `DATABASE_URL`).
+- Generated the initial migration offline (`drizzle-kit generate` needs no live DB
+  connection, only the schema file) — `apps/api/drizzle/0000_ambiguous_makkari.sql`,
+  a single `CREATE TABLE "users" (...)`. **Not applied to any database** — no
+  `DATABASE_URL` credentials exist in this environment. Run `pnpm db:migrate`
+  (root) once a real `DATABASE_URL` is configured to actually create the table.
+- `apps/api/.env.example`: dropped the `ELECTRICITY_MAPS_TOKEN` entry (dead config
+  left over from the deleted `carbon` module — missed in the earlier cleanup pass)
+  and updated the `DATABASE_URL` comment to mention Drizzle/drizzle-kit instead of
+  being silent on which layer reads it.
+
+### Deliberate behavior changes from the Prisma-era schema
+
+- **Table/column naming: PascalCase/camelCase → snake_case.** Prisma's default
+  (no `@@map`) produced a quoted `"User"` table with camelCase columns
+  (`"clerkId"`, `"planApprovalMode"`, ...). The new Drizzle schema uses
+  conventional Postgres snake_case (`users`, `clerk_id`, `plan_approval_mode`, ...)
+  — avoids quoted-identifier friction and matches typical Drizzle/Postgres
+  convention. **This means the new migration does not line up with any
+  pre-existing `"User"` table from a live Prisma-era database** — there's no
+  data-migration path here, since no live `DATABASE_URL` was available to check
+  whether one exists. If a real deployed database with existing `User` rows
+  exists, that data needs to be handled by hand (rename+lowercase the old table,
+  or export/reimport) before running the new migration against it.
+- **`id` default: Prisma's `cuid()` → `crypto.randomUUID()`.** No native cuid
+  generator in Drizzle without an extra dependency; nothing in the app validates
+  the id format specifically (`userId`/`clerkId` are treated as opaque strings
+  throughout), so this is a safe, low-risk substitution for a table with no
+  existing rows to reconcile.
+
+### Verification
+
+- `pnpm install` — clean.
+- `drizzle-kit generate` — produced the expected single-table migration, matching
+  the seven-column `User` model schema.prisma had (`id`, `clerkId`,
+  `planApprovalMode`, `modelKey`, `encryptedApiKey`, `processingMode`,
+  `createdAt`, `updatedAt`).
+- `pnpm typecheck` — 4/4 tasks pass across all 3 packages.
+- `pnpm test` — 3 suites, 25 tests pass (`byok-encryption.spec.ts`,
+  `app.controller.spec.ts`, `users.service.spec.ts` — the last one rewritten for
+  the Drizzle mock, same coverage as the Prisma-era version).
+
+### Still pending
+
+- Applying `apps/api/drizzle/0000_ambiguous_makkari.sql` to a real database —
+  needs a `DATABASE_URL` this environment doesn't have.
+- Stage 3's domain pivot (`DeviceAsset`/`TelemetryLog`/`FaultDiagnostic`) now
+  happens directly against the Drizzle schema in `apps/api/src/common/db/schema.ts`
+  — no second ORM migration needed first.

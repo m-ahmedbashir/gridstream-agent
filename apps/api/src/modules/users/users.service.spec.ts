@@ -1,25 +1,40 @@
 import { BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { PrismaService } from '../../common/prisma/prisma.service';
+import { DbService } from '../../common/db/db.service';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 
 type MockUser = { planApprovalMode?: string; modelKey?: string; processingMode?: string; encryptedApiKey?: string | null };
 
-function makePrismaMock(existingUser: MockUser | null = null) {
-    return {
-        user: {
-            findUnique: jest.fn().mockResolvedValue(existingUser),
-            upsert: jest.fn().mockImplementation(({ create, update }) =>
-                Promise.resolve({
-                    planApprovalMode: update.planApprovalMode ?? create.planApprovalMode,
-                    modelKey: update.modelKey ?? create.modelKey,
-                    processingMode: update.processingMode ?? create.processingMode,
-                    encryptedApiKey: 'encryptedApiKey' in update ? update.encryptedApiKey : create.encryptedApiKey ?? null,
-                    updatedAt: new Date(),
-                }),
-            ),
-        },
-    } as unknown as PrismaService;
+/**
+ * Mimics Drizzle's fluent query builder (`.select().from().where().limit()`
+ * and `.insert().values().onConflictDoUpdate().returning()`) closely enough
+ * to exercise UsersService without a real Postgres connection. `valuesMock`/
+ * `onConflictDoUpdateMock` are exposed so tests can assert on exactly what
+ * was passed to insert/upsert, the same way the old Prisma mock exposed
+ * `user.upsert`'s call args.
+ */
+function makeDbMock(existingUser: MockUser | null = null) {
+    const selectResult = existingUser ? [existingUser] : [];
+    const limitMock = jest.fn().mockResolvedValue(selectResult);
+    const whereMock = jest.fn().mockReturnValue({ limit: limitMock });
+    const fromMock = jest.fn().mockReturnValue({ where: whereMock });
+    const selectMock = jest.fn().mockReturnValue({ from: fromMock });
+
+    const onConflictDoUpdateMock = jest.fn();
+    const valuesMock = jest.fn((insertValues: Record<string, unknown>) => ({
+        onConflictDoUpdate: onConflictDoUpdateMock.mockImplementation(({ set }: { set: Record<string, unknown> }) => ({
+            returning: jest.fn().mockResolvedValue([
+                existingUser ? { ...existingUser, ...set } : { ...insertValues, ...set },
+            ]),
+        })),
+    }));
+    const insertMock = jest.fn().mockReturnValue({ values: valuesMock });
+
+    const dbService = {
+        db: { select: selectMock, insert: insertMock },
+    } as unknown as DbService;
+
+    return { dbService, valuesMock, onConflictDoUpdateMock };
 }
 
 /**
@@ -44,8 +59,8 @@ describe('UsersService', () => {
 
     describe('getSettings()', () => {
         it('returns defaults (MANUAL_REVIEW + openrouter:nemotron-nano-12b-v2-vl-free + vision + no key) when the user does not exist yet', async () => {
-            const prisma = makePrismaMock(null);
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService } = makeDbMock(null);
+            const service = new UsersService(dbService, encryptionService);
 
             const settings = await service.getSettings('new-user');
 
@@ -58,8 +73,8 @@ describe('UsersService', () => {
         });
 
         it('returns the stored values when the user already has settings', async () => {
-            const prisma = makePrismaMock({ planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService } = makeDbMock({ planApprovalMode: 'AUTO_APPROVE', modelKey: 'openai:gpt-4o', processingMode: 'vision' });
+            const service = new UsersService(dbService, encryptionService);
 
             const settings = await service.getSettings('existing-user');
 
@@ -72,13 +87,13 @@ describe('UsersService', () => {
         });
 
         it('reports hasApiKey=true but never returns the encrypted value itself', async () => {
-            const prisma = makePrismaMock({
+            const { dbService } = makeDbMock({
                 planApprovalMode: 'MANUAL_REVIEW',
                 modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                 processingMode: 'vision',
                 encryptedApiKey: 'encrypted(sk-real-secret-value)',
             });
-            const service = new UsersService(prisma, encryptionService);
+            const service = new UsersService(dbService, encryptionService);
 
             const settings = await service.getSettings('existing-user');
 
@@ -90,63 +105,59 @@ describe('UsersService', () => {
 
     describe('updateSettings()', () => {
         it('creates a user with defaults for any field not supplied', async () => {
-            const prisma = makePrismaMock(null);
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService, valuesMock } = makeDbMock(null);
+            const service = new UsersService(dbService, encryptionService);
 
             await service.updateSettings('new-user', { planApprovalMode: 'AUTO_APPROVE' });
 
-            expect(prisma.user.upsert).toHaveBeenCalledWith(
+            expect(valuesMock).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    create: expect.objectContaining({
-                        planApprovalMode: 'AUTO_APPROVE',
-                        modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', // untouched field defaults, doesn't come back as undefined
-                        processingMode: 'vision',
-                    }),
+                    clerkId: 'new-user',
+                    planApprovalMode: 'AUTO_APPROVE',
+                    modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', // untouched field defaults, doesn't come back as undefined
+                    processingMode: 'vision',
                 }),
             );
         });
 
         it('updates only the field actually provided, leaving the others untouched', async () => {
-            const prisma = makePrismaMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', processingMode: 'vision' });
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService, onConflictDoUpdateMock } = makeDbMock({ planApprovalMode: 'MANUAL_REVIEW', modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free', processingMode: 'vision' });
+            const service = new UsersService(dbService, encryptionService);
 
             await service.updateSettings('existing-user', { modelKey: 'anthropic:claude-3-5-sonnet' });
 
-            const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
-            expect(upsertArgs.update).toEqual({ modelKey: 'anthropic:claude-3-5-sonnet' });
-            expect(upsertArgs.update.planApprovalMode).toBeUndefined();
-            expect(upsertArgs.update.processingMode).toBeUndefined();
-            expect(upsertArgs.update.encryptedApiKey).toBeUndefined();
+            const setArgs = onConflictDoUpdateMock.mock.calls[0][0].set;
+            expect(setArgs).toEqual({ modelKey: 'anthropic:claude-3-5-sonnet', updatedAt: expect.any(Date) });
         });
 
         it('rejects an unrecognised modelKey instead of silently storing a broken preference', async () => {
-            const prisma = makePrismaMock(null);
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService, valuesMock } = makeDbMock(null);
+            const service = new UsersService(dbService, encryptionService);
 
             await expect(
                 service.updateSettings('some-user', { modelKey: 'made-up-provider:not-a-model' }),
             ).rejects.toThrow(BadRequestException);
-            expect(prisma.user.upsert).not.toHaveBeenCalled();
+            expect(valuesMock).not.toHaveBeenCalled();
         });
 
         describe('BYOK key handling', () => {
-            it('encrypts a supplied apiKey before it ever reaches Prisma', async () => {
-                const prisma = makePrismaMock(null);
-                const service = new UsersService(prisma, encryptionService);
+            it('encrypts a supplied apiKey before it ever reaches the database', async () => {
+                const { dbService, valuesMock } = makeDbMock(null);
+                const service = new UsersService(dbService, encryptionService);
 
                 await service.updateSettings('some-user', { apiKey: 'sk-my-real-groq-key' });
 
                 expect(encryptionService.encrypt).toHaveBeenCalledWith('sk-my-real-groq-key');
 
-                const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
-                // The plaintext must never appear anywhere in the Prisma call args.
-                expect(JSON.stringify(upsertArgs)).not.toContain('sk-my-real-groq-key');
-                expect(upsertArgs.create.encryptedApiKey).toBe('enc:736b2d6d792d7265616c2d67726f712d6b6579');
+                const insertArgs = valuesMock.mock.calls[0][0];
+                // The plaintext must never appear anywhere in the insert call args.
+                expect(JSON.stringify(insertArgs)).not.toContain('sk-my-real-groq-key');
+                expect(insertArgs.encryptedApiKey).toBe('enc:736b2d6d792d7265616c2d67726f712d6b6579');
             });
 
             it('never returns the plaintext or ciphertext from updateSettings — only hasApiKey', async () => {
-                const prisma = makePrismaMock(null);
-                const service = new UsersService(prisma, encryptionService);
+                const { dbService } = makeDbMock(null);
+                const service = new UsersService(dbService, encryptionService);
 
                 const result = await service.updateSettings('some-user', { apiKey: 'sk-my-real-groq-key' });
 
@@ -160,33 +171,33 @@ describe('UsersService', () => {
             });
 
             it('clears a saved key when apiKey is an empty string', async () => {
-                const prisma = makePrismaMock({
+                const { dbService, onConflictDoUpdateMock } = makeDbMock({
                     planApprovalMode: 'MANUAL_REVIEW',
                     modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
-                const service = new UsersService(prisma, encryptionService);
+                const service = new UsersService(dbService, encryptionService);
 
                 const result = await service.updateSettings('existing-user', { apiKey: '' });
 
-                const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
-                expect(upsertArgs.update.encryptedApiKey).toBeNull();
+                const setArgs = onConflictDoUpdateMock.mock.calls[0][0].set;
+                expect(setArgs.encryptedApiKey).toBeNull();
                 expect(result.hasApiKey).toBe(false);
                 expect(encryptionService.encrypt).not.toHaveBeenCalled();
             });
 
             it('leaves a saved key untouched when apiKey is omitted entirely', async () => {
-                const prisma = makePrismaMock({
+                const { dbService, onConflictDoUpdateMock } = makeDbMock({
                     planApprovalMode: 'MANUAL_REVIEW',
                     modelKey: 'openrouter:nemotron-nano-12b-v2-vl-free',
                     encryptedApiKey: 'encrypted(sk-old-key)',
                 });
-                const service = new UsersService(prisma, encryptionService);
+                const service = new UsersService(dbService, encryptionService);
 
                 await service.updateSettings('existing-user', { planApprovalMode: 'AUTO_APPROVE' });
 
-                const upsertArgs = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
-                expect(upsertArgs.update.encryptedApiKey).toBeUndefined();
+                const setArgs = onConflictDoUpdateMock.mock.calls[0][0].set;
+                expect(setArgs.encryptedApiKey).toBeUndefined();
                 expect(encryptionService.encrypt).not.toHaveBeenCalled();
             });
         });
@@ -194,23 +205,23 @@ describe('UsersService', () => {
 
     describe('getDecryptedApiKey()', () => {
         it('returns undefined when the user has no saved key', async () => {
-            const prisma = makePrismaMock({ encryptedApiKey: null });
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService } = makeDbMock({ encryptedApiKey: null });
+            const service = new UsersService(dbService, encryptionService);
 
             expect(await service.getDecryptedApiKey('some-user')).toBeUndefined();
             expect(encryptionService.decrypt).not.toHaveBeenCalled();
         });
 
         it('returns undefined when the user does not exist', async () => {
-            const prisma = makePrismaMock(null);
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService } = makeDbMock(null);
+            const service = new UsersService(dbService, encryptionService);
 
             expect(await service.getDecryptedApiKey('no-such-user')).toBeUndefined();
         });
 
         it('decrypts and returns the plaintext key when one is saved', async () => {
-            const prisma = makePrismaMock({ encryptedApiKey: 'enc:736b2d7468652d7265616c2d6b6579' });
-            const service = new UsersService(prisma, encryptionService);
+            const { dbService } = makeDbMock({ encryptedApiKey: 'enc:736b2d7468652d7265616c2d6b6579' });
+            const service = new UsersService(dbService, encryptionService);
 
             const key = await service.getDecryptedApiKey('some-user');
 
