@@ -29,7 +29,7 @@ A PR that fails either of these won't be merged as-is — please get them green 
 - Check [open issues](https://github.com/m-ahmedbashir/maintain-agent/issues) first. If nothing's filed for what you want to do, open one before sending a large PR, so we can agree on approach before you invest the time.
 - The README's [Roadmap](README.md#-roadmap) section lists concrete, scoped next steps — each one there is deliberately sized to be a single PR, not an epic.
 - **Good first issues** (small, well-defined, verified-broken so you won't waste time confirming the bug first):
-  - **Fix frontend linting.** `apps/frontend`'s `lint` script is `next lint`, which no longer exists as of Next.js 16 (`next --help` lists no `lint` subcommand). Running `eslint` directly against the legacy `.eslintrc.json` also fails (`TypeError: Converting circular structure to JSON`, from the `next/core-web-vitals` config under the installed `eslint@8.48.0` + `@eslint/eslintrc@2.1.4`). Needs a real migration to ESLint flat config, not a one-line patch.
+  - **Fix frontend linting.** `apps/web`'s `lint` script is `next lint`, which no longer exists as of Next.js 16 (`next --help` lists no `lint` subcommand). Running `eslint` directly against the legacy `.eslintrc.json` also fails (`TypeError: Converting circular structure to JSON`, from the `next/core-web-vitals` config under the installed `eslint@8.48.0` + `@eslint/eslintrc@2.1.4`). Needs a real migration to ESLint flat config, not a one-line patch.
   - Add a CI status badge to the README once `.github/workflows/ci.yml` has run a few times on `main`.
   - `generateObject`/`streamObject` in place of the manual `JSON.parse` in `extraction.service.ts`.
   - A provider-agnostic model registry so extraction isn't hard-wired to Groq.

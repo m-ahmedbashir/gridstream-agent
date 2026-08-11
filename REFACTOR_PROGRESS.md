@@ -72,8 +72,31 @@ stage must compile/typecheck clean before the next begins.
 
 - `package.json` (root): rename `maintain-agent` → `gridstream-agent`.
 - `packages/shared/` → `packages/ai-config/`, package name `@maintain/shared` → `@repo/ai-config`.
-- Every `@maintain/shared` import across `apps/backend` and `apps/frontend` → `@repo/ai-config` (also update their `package.json` dependency entries).
-- Leave `@maintain/backend` / `@maintain/frontend` package names as a separate decision — master prompt only specifies the shared package; will confirm before renaming those too, since it touches Railway/Vercel deploy filters (`pnpm build --filter=@maintain/backend`) referenced in `AGENTS.md`.
+- Every `@maintain/shared` import across `apps/api` and `apps/web` → `@repo/ai-config` (also update their `package.json` dependency entries).
+- Package names `@maintain/backend` / `@maintain/frontend` still pending a rename decision (e.g. `@gridstream/api`, `@gridstream/web`) — not done yet, since it touches the deploy filter commands in `AGENTS.md` (`pnpm build --filter=@maintain/backend`) and any Railway/Vercel dashboard build-command overrides.
 - Verify with `pnpm install && pnpm typecheck`.
 
-No files modified in Stage 1 — audit only, per plan.
+## Ahead of schedule — done during Stage 1 (at explicit request)
+
+Two folder-level renames were pulled forward into Stage 1 rather than waiting for
+Stage 2, since they don't touch package names/imports and were low-risk:
+
+- `apps/backend/` → `apps/api/` (git history preserved via `git mv`).
+- `apps/frontend/` → `apps/web/` (git history preserved via `git mv`).
+- Updated path references in `AGENTS.md`, `CONTRIBUTING.md`, `README.md`.
+- `packages/shared/dist/` and `packages/shared/tsconfig.tsbuildinfo` were tracked in
+  git despite already being listed in `.gitignore` — untracked with `git rm --cached`
+  (files remain on disk, just no longer versioned; future `tsc` output won't get
+  re-added).
+- `pnpm install` re-run to update lockfile importer paths (`pnpm-lock.yaml` keys
+  workspace packages by relative path, so the rename alone would have left it stale).
+- Verified: `pnpm typecheck` passes clean across all 3 packages post-rename.
+
+**Not changed:** package `name` fields (`@maintain/backend`, `@maintain/frontend`,
+`@maintain/shared`) are untouched — only directory paths moved. `pnpm --filter
+@maintain/backend ...` commands in root `package.json` and `AGENTS.md` still work
+as-is since pnpm filters resolve by package name, not path.
+
+**Manual follow-up needed (outside this repo):** if Railway/Vercel dashboards have
+a "root directory" setting pointing at `apps/backend` or `apps/frontend`, those need
+updating by hand — that config lives in the platform dashboards, not in-repo.

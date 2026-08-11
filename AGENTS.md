@@ -6,7 +6,7 @@
 
 ## Core Conventions
 - Validation: Every tool call must be validated against shared Zod schemas in `@maintain/shared`.
-- HITL UI: The frontend components for human review are in `apps/frontend/components/review`.
+- HITL UI: The frontend components for human review are in `apps/web/components/review`.
 
 ## Deployment
 - Backend: Deploys to Railway via `pnpm build --filter=@maintain/backend`.
