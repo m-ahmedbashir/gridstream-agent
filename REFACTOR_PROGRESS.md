@@ -100,3 +100,101 @@ as-is since pnpm filters resolve by package name, not path.
 **Manual follow-up needed (outside this repo):** if Railway/Vercel dashboards have
 a "root directory" setting pointing at `apps/backend` or `apps/frontend`, those need
 updating by hand — that config lives in the platform dashboards, not in-repo.
+
+---
+
+## 2026-08-12 — Strict-minimalism cleanup of the old maintenance domain
+
+Pulled forward, ahead of Stage 3-6, at explicit request: delete every module/feature
+that exists only to serve the old maintenance-report-planning domain and isn't
+load-bearing for the documented future stages (event-driven IoT telemetry / VPP
+diagnostic pipeline). This is a deletion-only pass — no new VPP code was written,
+and `apps/api/prisma/schema.prisma` / `prisma/migrations/` were deliberately left
+untouched (that pivot is a separate, more deliberate future task — see Stage 3).
+
+### Removed
+
+**Backend (`apps/api/src/`)**
+- `modules/maintenance/` (entire dir) — `MaintenanceController`, `MaintenanceExtractionService`,
+  `MatchingService`, `PlanningService`, `seed-measures.ts`, all specs. Reason: this *is* the old
+  domain; Stage 5's `ai-agent`/diagnostic module replaces it outright, nothing here is reusable
+  scaffolding (the hand-rolled `generateText()` + JSON-repair pattern is explicitly the thing
+  Stage 5 replaces with `generateObject()`/`tool()`).
+- `modules/telemetry/` (entire dir) — `TelemetryController`, `TelemetryService`,
+  `ThingSpeakDemoFeedService`. Reason: re-baselines a public weather feed into fake per-machine
+  temperatures; fully superseded by the real `TelemetrySimulatorService` + BullMQ pipeline in
+  Stage 4, not reusable as-is.
+- `modules/compliance/` (entire dir) — `ComplianceService`, German-text PII masking
+  (emails/IBANs/phones). Reason: nothing in the documented future stages processes free-text
+  documents; no future stage references it.
+- `modules/carbon/` (entire dir) — `CarbonIntensityService`, Electricity Maps lookup. Reason: not
+  referenced by any documented future stage. Trivially resurrectable from git history
+  (`git show <pre-cleanup-commit>:apps/api/src/modules/carbon/...`) if a later stage wants
+  grid-carbon context for real.
+- `modules/extraction/ocr.service.ts` + `apps/api/eng.traineddata` — Tesseract OCR, specific to
+  scanned maintenance reports; no consumer left once `maintenance/` is gone.
+- `tesseract.js` and `pdf-parse` removed from `apps/api/package.json` — confirmed via grep no
+  remaining import anywhere in `apps/api/src` after the above deletions.
+- `apps/api/test/fixtures/documents/*.txt` — confirmed unreferenced (the compliance/OCR specs that
+  used them are gone too).
+
+**Frontend (`apps/web/src/`)**
+- `features/maintenance/` and `app/dashboard/maintenance/` (history/live/measures/plan routes).
+- `features/extraction-settings/` and `app/dashboard/extraction-settings/`.
+- `src/config/nav-config.ts` — removed the "Maintenance" and "Settings" (extraction-settings) nav
+  entries; left Overview/AI Assistant and the commented-out placeholders alone.
+
+**`packages/shared`**
+- `src/schemas/maintenance.schema.ts` and `src/schemas/document-response.schema.ts` deleted;
+  `src/index.ts` no longer re-exports them (confirmed via grep that no file outside the deleted
+  ones imported from `@maintain/shared`).
+
+### Kept, and why
+
+- `modules/extraction/model-registry.ts` + `extraction.controller.ts` (`GET /extraction/models`) —
+  the provider-agnostic Groq/OpenAI/Anthropic/OpenRouter registry Stage 5's diagnostic agent binds
+  its model calls through directly. `extraction.module.ts` needed no change: it never had
+  `OcrService` registered as a provider (only `maintenance.module.ts` wired it in), so removing
+  `ocr.service.ts` required no module-wiring edit.
+- `modules/users/` (whole module, untouched) — Clerk-linked settings incl. `modelKey` and BYOK
+  `encryptedApiKey`; the future diagnostic agent still needs a model choice + optional BYOK key,
+  and `planApprovalMode` is the same auto-approve/manual-review concept the future HITL
+  "Active Alerts" queue reuses for `FaultDiagnostic`.
+- `common/crypto/` — BYOK AES-256-GCM encryption backing `users` module's `encryptedApiKey`.
+- `common/prisma/` — needed regardless of what the schema ends up containing.
+- `app.module.ts` now imports only `ConfigModule`, `PrismaModule`, `UsersModule`, `ExtractionModule`.
+
+### Judgment calls not explicitly covered by the task brief
+
+- `apps/api/prisma/seed.ts` imported `seedMeasures` from the now-deleted
+  `modules/maintenance/seed-measures.ts`. Reduced it to a wired-but-no-op `main()` (kept as the
+  `prisma.seed` entry point for whatever the VPP domain needs to seed later) rather than deleting
+  the script outright, since `package.json`'s `prisma.seed` config still points at it.
+- `apps/api/test/app.e2e-spec.ts` only ever tested `/` (`Hello World!`) — no `/maintenance` or
+  telemetry route tests existed to remove; left as-is.
+- `apps/api/src/modules/extraction/model-registry.ts`'s `ProcessingMode` type (`'vision' |
+  'local-ocr'`) and its doc comment mentioning Tesseract were left untouched, per the task's
+  explicit instruction to keep `model-registry.ts` and the `users` module "as-is" — `'local-ocr'`
+  is now a selectable-but-inert value (no consumer left performs local OCR), but nothing
+  references the deleted `OcrService` directly, so it doesn't break the build. Flagged here rather
+  than silently cleaned up, since trimming it wasn't in the brief and touches a file marked keep-as-is.
+- `apps/web/src/app/api/chat/route.ts`'s maintenance-themed system prompt and
+  `app/dashboard/chat/chat-view.tsx`'s maintenance-flavored sample-prompt copy, plus one generic
+  "regular maintenance" sentence in `app/privacy-policy/page.tsx`, were all left untouched — none
+  are broken references (no imports of deleted code), just copy; explicitly out of scope per the
+  task brief (chat feature itself stays intact, content pass deferred).
+- `AGENTS.md` had an unrelated staged edit already in the index when this task started (a "Type
+  safety & single source of truth" section rewrite, not authored by this cleanup) that itself
+  introduced a reference to a file this cleanup deletes
+  (`features/maintenance/use-extract-maintenance.ts`). Left that section's structure/intent as
+  found and only fixed the now-dangling file reference, since rewriting someone else's already-staged
+  prose further wasn't part of this task.
+- `packages/shared/src/schemas/` is now an empty directory (git doesn't track empty dirs, so this
+  doesn't show up in `git status`) — left in place rather than removed, since `AGENTS.md` and this
+  file both point at it as where the Stage 3 VPP schemas will land.
+
+### Still pending (unchanged by this cleanup)
+
+`apps/api/prisma/schema.prisma` and `prisma/migrations/` still describe the old
+`MachineProfile`/`MachineReading`/`Measure`/`Plan` domain — the `DeviceAsset`/`TelemetryLog`/
+`FaultDiagnostic` pivot is Stage 3, a separate and more deliberate task, deferred as instructed.
