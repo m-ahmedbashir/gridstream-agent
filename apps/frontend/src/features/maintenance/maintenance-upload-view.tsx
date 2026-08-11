@@ -1,16 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileUploader } from '@/components/file-uploader';
 import { useExtractMaintenance } from './use-extract-maintenance';
+import { useModelOptions } from '@/features/extraction-settings/hooks/useModelOptions';
+import { useSettings } from '@/features/extraction-settings/hooks/useSettings';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { IconUpload, IconX, IconTextCaption } from '@tabler/icons-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useRouter } from 'next/navigation';
 import type { MachineProfile, MachineProfileConfidence } from '@maintain/shared';
+
+const PROVIDER_LABELS: Record<string, string> = {
+    groq: 'Groq',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    openrouter: 'OpenRouter',
+};
 
 function CriticalityBadge({ criticality }: { criticality: string }) {
     const variants: Record<string, string> = {
@@ -149,8 +160,19 @@ export function MaintenanceUploadView() {
     const [files, setFiles] = useState<File[]>([]);
     const [pastedText, setPastedText] = useState('');
     const [results, setResults] = useState<ExtractionOutcome[]>([]);
+    const [modelKey, setModelKey] = useState('');
 
     const { mutateAsync: extractMaintenance, isPending } = useExtractMaintenance();
+    const { models, loading: modelsLoading } = useModelOptions();
+    const { settings } = useSettings();
+
+    // Default to the user's saved Settings model once it loads, but this
+    // picker only affects the current upload — it never writes back to Settings.
+    useEffect(() => {
+        if (settings?.modelKey && !modelKey) {
+            setModelKey(settings.modelKey);
+        }
+    }, [settings, modelKey]);
 
     const handleUploadFiles = async (filesToUpload: File[]) => {
         setResults([]);
@@ -158,7 +180,7 @@ export function MaintenanceUploadView() {
 
         for (let i = 0; i < filesToUpload.length; i += EXTRACTION_CONCURRENCY) {
             const batch = filesToUpload.slice(i, i + EXTRACTION_CONCURRENCY);
-            const settled = await Promise.allSettled(batch.map((file) => extractMaintenance({ file })));
+            const settled = await Promise.allSettled(batch.map((file) => extractMaintenance({ file, modelKey: modelKey || undefined })));
 
             settled.forEach((outcome, idx) => {
                 const file = batch[idx];
@@ -185,7 +207,7 @@ export function MaintenanceUploadView() {
     const handleTextExtract = async () => {
         if (!pastedText.trim()) return;
         try {
-            const res = await extractMaintenance({ text: pastedText });
+            const res = await extractMaintenance({ text: pastedText, modelKey: modelKey || undefined });
             setResults([{
                 status: 'success',
                 fileName: 'pasted text',
@@ -202,6 +224,30 @@ export function MaintenanceUploadView() {
 
     return (
         <div className="space-y-6 pb-10">
+            <Card>
+                <CardContent className='flex flex-col gap-2 pt-6 sm:flex-row sm:items-center sm:justify-between'>
+                    <div>
+                        <Label htmlFor='upload-model-picker' className='text-sm font-medium'>AI Model for this upload</Label>
+                        <p className='text-xs text-muted-foreground'>
+                            Which model handles extraction. Models without vision support can&apos;t process images or scanned PDFs. Defaults to your saved Settings — changing it here only affects this upload.
+                        </p>
+                    </div>
+                    <Select value={modelKey} onValueChange={setModelKey} disabled={modelsLoading || models.length === 0}>
+                        <SelectTrigger id='upload-model-picker' className='w-full sm:w-[300px]'>
+                            <SelectValue placeholder={modelsLoading ? 'Loading models...' : 'Select a model...'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {models.map((model) => (
+                                <SelectItem key={model.key} value={model.key}>
+                                    {PROVIDER_LABELS[model.provider] ?? model.provider} — {model.modelId}
+                                    {!model.supportsVision && ' (text only)'}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </CardContent>
+            </Card>
+
             <Tabs defaultValue="file" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="file">File Upload</TabsTrigger>

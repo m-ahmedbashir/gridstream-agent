@@ -24,17 +24,20 @@ export type ExtractMaintenanceVariables = {
     file?: File;
     text?: string;
     processingMode?: string;
+    /** Per-upload override — falls back to the user's saved Settings model when omitted. */
+    modelKey?: string;
 };
 
 async function uploadMaintenanceRequest(
     variables: ExtractMaintenanceVariables,
     userId: string,
 ): Promise<MaintenanceExtractionResult> {
-    const { file, text, processingMode } = variables;
+    const { file, text, processingMode, modelKey } = variables;
     const formData = new FormData();
     if (file) formData.append('file', file);
     if (text) formData.append('text', text);
     if (processingMode) formData.append('processingMode', processingMode);
+    if (modelKey) formData.append('modelKey', modelKey);
     formData.append('userId', userId);
 
     const itemName = file ? file.name : 'pasted text';
