@@ -11,6 +11,7 @@
 
 ## Contents
 
+- [System Architecture](#%EF%B8%8F-system-architecture)
 - [Where this project is right now](#-where-this-project-is-right-now)
 - [Target architecture](#-target-architecture)
 - [Building an AI feature here](#-building-an-ai-feature-here)
@@ -21,6 +22,49 @@
 - [Contributing](#-contributing)
 - [License](#-license)
 - [About the Author](#-about-the-author)
+
+## 🏗️ System Architecture
+
+What's actually wired up today — not the target pipeline below, the real current components:
+
+```mermaid
+flowchart LR
+    U["👤 Operator"] --> UI
+
+    subgraph Frontend["apps/web — Next.js 16"]
+        UI["Dashboard UI<br/>(Clerk-authenticated)"]
+    end
+
+    subgraph Backend["apps/api — NestJS"]
+        API["REST API"]
+        DB_SVC["DbService<br/>(Drizzle ORM)"]
+        AI_SVC["model-registry.ts<br/>(provider-agnostic)"]
+        CRYPTO["BYOK encryption<br/>(AES-256-GCM)"]
+    end
+
+    ZOD[("packages/shared<br/>Zod schemas")]
+    PG[("PostgreSQL")]
+    PROVIDERS["Groq / OpenAI /<br/>Anthropic / OpenRouter"]
+    CLERK["Clerk Auth"]
+
+    UI -->|Zod-typed requests| API
+    UI -.->|session| CLERK
+    API --> DB_SVC --> PG
+    API --> AI_SVC --> PROVIDERS
+    API --> CRYPTO
+    UI -.->|imports| ZOD
+    API -.->|imports| ZOD
+
+    style U fill:#1d4ed8,color:#fff
+    style PG fill:#0891b2,color:#fff
+    style PROVIDERS fill:#7c3aed,color:#fff
+    style CLERK fill:#b45309,color:#fff
+    style ZOD fill:#334155,color:#fff
+```
+
+No `DeviceAsset`/`TelemetryLog`/ingestion queue exists in this diagram on purpose — see the next section for what's real today versus what's still ahead.
+
+---
 
 ## 📍 Where this project is right now
 
@@ -42,28 +86,39 @@ The intended end-to-end flow, once the remaining stages land (tracked in [REFACT
 
 ```mermaid
 flowchart TD
-    A["📡 Telemetry simulator<br/>generates smart-meter readings,<br/>injects periodic anomaly spikes"]
-    --> B["🧵 Redis / BullMQ queue<br/>ingestion pipeline, backpressure-safe"]
-    --> C["🗄️ Interval aggregates<br/>written to PostgreSQL"]
-    --> D{"Safety bounds breached?<br/>(thermal runaway, voltage sag, ...)"}
-    D -->|"No"| C
-    D -->|"Yes"| E["🤖 AI diagnostic agent<br/>generateObject + tool calling,<br/>bound to FaultDiagnosticSchema"]
-    E --> F["📋 FaultDiagnostic created<br/>status: PENDING_APPROVAL"]
-    F --> G["🟡 Active Alerts queue<br/>on the VPP dashboard"]
-    G --> H["👤 Operator reviews and clicks<br/>Approve Dispatch or Reject"]
-    H --> I["🟢 Dispatch approved"]
-    H --> J["🔴 Rejected"]
+    subgraph Ingestion ["1. High-Throughput Ingestion"]
+        A["⚡ Smart Meters & Solar Assets"] -->|HTTP / WebSockets| B["NestJS Ingestion Service"]
+        B -->|Publish Telemetry| C[("Redis / BullMQ Queue")]
+    end
+
+    subgraph Processing ["2. Time-Series Storage & Rules"]
+        C -->|Batch Worker| D[("PostgreSQL Time-Series")]
+        C -->|Threshold Check| E{"Anomaly Detected?<br/>(Temp > 65°C | Voltage Sag)"}
+        E -->|No| F["Save to Baseline"]
+        E -->|Yes| G["Trigger AI Diagnostic Service"]
+    end
+
+    subgraph AgenticAI ["3. Vercel AI SDK Diagnostic Agent"]
+        G --> H["🤖 Agentic Tool Loop (maxSteps: 3)"]
+        H -->|Tool Call| I["getHistoricalBaseline()"]
+        H -->|Tool Call| J["getHardwareManual()"]
+        I & J --> K["Strict Zod Validation<br/>(FaultDiagnosticSchema)"]
+    end
+
+    subgraph HITL ["4. Operations & Human-in-the-Loop"]
+        K --> L{"High Severity / Field Dispatch?"}
+        L -->|No| M["Auto-Log System Ticket"]
+        L -->|Yes| N["🟡 status: PENDING_APPROVAL"]
+        N --> O["👤 Operator clicks Approve in dashboard"]
+        O --> P["🚚 Dispatch service technician"]
+    end
 
     style A fill:#1d4ed8,color:#fff
-    style B fill:#7c3aed,color:#fff
-    style C fill:#0891b2,color:#fff
-    style D fill:#b45309,color:#fff
-    style E fill:#15803d,color:#fff
-    style F fill:#15803d,color:#fff
-    style G fill:#b45309,color:#fff
-    style H fill:#b45309,color:#fff
-    style I fill:#15803d,color:#fff
-    style J fill:#b91c1c,color:#fff
+    style C fill:#7c3aed,color:#fff
+    style D fill:#0891b2,color:#fff
+    style G fill:#0891b2,color:#fff
+    style K fill:#b45309,color:#fff
+    style P fill:#15803d,color:#fff
 ```
 
 The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** Severity thresholds, financial estimates, and pass/fail safety checks are deterministic TypeScript; the model's job is qualitative diagnosis and tool orchestration only.
