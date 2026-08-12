@@ -9,7 +9,7 @@ stage must compile/typecheck clean before the next begins.
 | Stage | Description | Status |
 |---|---|---|
 | 1 | Codebase audit & mapping | ✅ Done |
-| 2 | Monorepo workspace & package renaming | ⬜ Not started |
+| 2 | Monorepo workspace & package renaming | ✅ Done |
 | 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ⬜ Not started |
 | 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ⬜ Not started |
 | 5 | Vercel AI SDK diagnostic agent (generateObject + tool calling) | ⬜ Not started |
@@ -68,13 +68,24 @@ stage must compile/typecheck clean before the next begins.
 
 ---
 
-## Confirmed file-level plan for Stage 2
+## Stage 2 — Monorepo Workspace & Package Renaming — ✅ Done
 
-- `package.json` (root): rename `maintain-agent` → `gridstream-agent`.
-- `packages/shared/` → `packages/ai-config/`, package name `@maintain/shared` → `@repo/ai-config`.
-- Every `@maintain/shared` import across `apps/api` and `apps/web` → `@repo/ai-config` (also update their `package.json` dependency entries).
-- Package names `@maintain/backend` / `@maintain/frontend` still pending a rename decision (e.g. `@gridstream/api`, `@gridstream/web`) — not done yet, since it touches the deploy filter commands in `AGENTS.md` (`pnpm build --filter=@maintain/backend`) and any Railway/Vercel dashboard build-command overrides.
-- Verify with `pnpm install && pnpm typecheck`.
+Completed incrementally across several turns rather than one pass; recorded here as
+a single resolved entry.
+
+- `package.json` (root): `maintain-agent` → `gridstream-agent`. ✅
+- `apps/backend` → `apps/api`, `apps/frontend` → `apps/web` (pulled into Stage 1, see below). ✅
+- `@maintain/backend` → `@gridstream/api`, `@maintain/frontend` → `@gridstream/web`,
+  `@maintain/shared` → `@gridstream/shared`. ✅ (see the dated "Package renames" entry
+  further down for the full file list and verification.)
+- **Deliberate deviation from the original plan:** the plan called for renaming
+  `packages/shared/` → `packages/ai-config/` (`@repo/ai-config`). Decision: don't —
+  `packages/shared` stays as the general shared-code package (`@gridstream/shared`).
+  A separate `packages/ai-config` may get created later *if* something concrete
+  needs that split (e.g. AI-provider config/prompts/tool schemas that genuinely
+  don't belong alongside general shared Zod types) — not speculatively now, per
+  this repo's own "don't scaffold ahead of a real need" convention.
+- Verified with `pnpm install && pnpm typecheck` at each step.
 
 ## Ahead of schedule — done during Stage 1 (at explicit request)
 
