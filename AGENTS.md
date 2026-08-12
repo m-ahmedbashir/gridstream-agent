@@ -4,7 +4,7 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 ## What this is
 
-`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`). Redis + BullMQ back the telemetry-ingestion queue.
+`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`) and AI model config via `packages/ai-config` (`@gridstream/ai-config`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`). Redis + BullMQ back the telemetry-ingestion queue.
 
 Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for build history and what's next — this file only states current rules, not status.
 
@@ -18,7 +18,7 @@ SOLID at the file level, as you write, not as a retrofit:
 
 - **SRP** — a controller routes, a service holds business logic, a `*.service.spec.ts` tests it. `UsersController` (`apps/api/src/modules/users/users.controller.ts`) delegates every real decision to `UsersService` — it never computes anything itself. Two reasons to change in one file means split it.
 - **OCP** — a new feature is a new module (`*.controller.ts` + `*.module.ts` + `*.service.ts`), not an edit inside an unrelated one. Registering the new module in `app.module.ts`'s `imports` array is the accepted one-line exception.
-- **LSP** — the model-provider abstraction (`apps/api/src/common/ai/model-registry.ts`) is the reference: `resolveModel(key, apiKeyOverride?)` returns a `LanguageModel` regardless of whether the key resolves to Groq, OpenAI, Anthropic, or OpenRouter — callers never branch on provider. Don't bake a single-provider assumption into a service meant to work with any registry entry.
+- **LSP** — the model-provider abstraction (`packages/ai-config/src/model-registry.ts`) is the reference: `resolveModel(key, apiKeyOverride?)` returns a `LanguageModel` regardless of whether the key resolves to Groq, OpenAI, Anthropic, or OpenRouter — callers never branch on provider. Don't bake a single-provider assumption into a service meant to work with any registry entry.
 - **ISP** — request DTOs are precise per-endpoint, never one shared blob. A small, endpoint-specific interface, not one bloated request type with mostly-unused optional fields.
 - **DIP** — NestJS constructor injection throughout; a service depends on injected services, never `new`s up its own collaborator. Accepted exception: `model-registry.ts`'s `resolveModel`/`getModelDescriptor` are plain exported functions, not injectable services — fine, since they're pure or read only `process.env` at call time, with no state worth mocking.
 
@@ -36,20 +36,22 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts, which delegates
                                       to DiagnosticsModule (below)
   src/modules/diagnostics/          no controller either — triggered via DI from telemetry-ingestion, not HTTP.
-                                      diagnostics.service.ts (generateText + tools + a schema-only "submit" tool,
-                                      see "Building an AI feature") + tools/get-historical-baseline.tool.ts
-                                      (real DB aggregate query) + tools/get-hardware-manual.tool.ts (a clearly-
-                                      documented stub knowledge base — no real manufacturer data behind it,
-                                      same honesty as the telemetry simulator)
+                                      diagnostics.service.ts (generateText + tools + Output.object() for the
+                                      final structured answer, see "Building an AI feature") + tools/get-
+                                      historical-baseline.tool.ts (real DB aggregate query) + tools/get-
+                                      hardware-manual.tool.ts (a clearly-documented stub knowledge base — no
+                                      real manufacturer data behind it, same honesty as the telemetry simulator)
   src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared; never define a table here
   src/common/crypto/          BYOK AES-256-GCM encryption
-  src/common/ai/              model-registry.ts — the only place a provider SDK is imported, ever
   scripts/                    one-off scripts run via ts-node, outside the Nest DI graph (e.g. seed-devices.ts)
   drizzle.config.ts           drizzle-kit config — schema path points at packages/shared/src/db/schema.ts
   drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
 
 apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/app/                    routes (App Router, incl. parallel routes under dashboard/overview)
+  src/app/api/chat/route.ts   the only AI-calling code in this app — a Route Handler (runs server-side in
+                                Node, never the browser), resolves its model through @gridstream/ai-config
+                                like any server-side AI call in either app
   src/features/<feature>/     feature-scoped components + TanStack Query hooks (use-*.ts)
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
   __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
@@ -61,6 +63,16 @@ packages/shared/            imported by both apps as `@gridstream/shared`
                                 imports only the derived Zod schemas/types, never the raw tables.
   src/schemas/                 hand-written Zod schemas for shapes that aren't 1:1 with a DB row (request/
                                 response bodies, AI structured-output schemas) — land here as needed
+
+packages/ai-config/         imported by both apps as `@gridstream/ai-config` — server-side callers only
+  src/model-registry.ts        THE single source of truth for which models exist: MODEL_REGISTRY,
+                                DEFAULT_MODEL_KEY, resolveModel(key, apiKeyOverride?). The only place a
+                                provider SDK (@ai-sdk/groq/openai/anthropic) is imported, ever, in either
+                                app. Deliberately a separate package from packages/shared, not folded into
+                                it: packages/shared gets bundled into apps/web's browser build the moment a
+                                component imports a derived type from it, and resolveModel() does server-
+                                only things (dynamic import of provider SDKs, reads secret env vars) that
+                                must never end up in client JS — see the rule below.
 ```
 
 Rules from this layout:
@@ -69,6 +81,7 @@ Rules from this layout:
 - A domain type is defined once, in `packages/shared`, and inferred everywhere else via `z.infer<typeof Schema>` — never hand-write a duplicate interface.
 - `packages/shared/src/db/schema.ts` is the only place table shapes are defined. Its Zod schemas are *derived* from the tables via drizzle-zod — never hand-written separately alongside them. `apps/api`'s `DbService` imports the table objects directly from `@gridstream/shared`; it never redefines a table locally. A service reads/writes through `DbService`'s Drizzle instance, never raw SQL, unless a migration genuinely needs it.
 - Any `$defaultFn`/runtime code inside a table definition must work in both Node and a browser bundle (e.g. the global `crypto.randomUUID()`, not `import { randomUUID } from 'crypto'`) — this file is bundled into `apps/web` the moment it imports a derived type from it.
+- `packages/ai-config` is imported only from server-side code — a NestJS service, a Next.js Route Handler — never from a client component or a hook. Unlike `packages/shared`, it isn't meant to be browser-safe: `resolveModel()` reads secret provider env vars and dynamically imports server-only provider SDKs.
 
 ## Adding a new feature — minimal footprint
 
@@ -88,7 +101,7 @@ A shape gets defined **once**, in `packages/shared`, and both apps import that s
 
 ## Building an AI feature (Vercel AI SDK)
 
-**Model access is centralized, permanently.** `apps/api/src/common/ai/model-registry.ts` is the *only* place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`, `@ai-sdk/anthropic`) gets imported. A feature resolves a model via `resolveModel(key, apiKeyOverride?)` — never imports a provider SDK itself, never hardcodes a model id inline. Add a new model by adding a registry entry, not by writing a second provider client somewhere else.
+**Model access is centralized, permanently, across both apps.** `packages/ai-config/src/model-registry.ts` is the *only* place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`, `@ai-sdk/anthropic`) gets imported — imported as `@gridstream/ai-config` by any server-side code in either `apps/api` or `apps/web` (a NestJS service, a Next.js Route Handler; never client-side code, since it reads secret env vars and imports server-only packages). A feature resolves a model via `resolveModel(key, apiKeyOverride?)` — never imports a provider SDK itself, never hardcodes a model id or a provider's `baseURL`/client setup inline. Add a new model by adding a registry entry, not by writing a second provider client somewhere else — `apps/web`'s chat route and `apps/api`'s diagnostic agent both resolve through the exact same registry entry today, which is what this rule is for.
 
 **Start with the simplest structure that solves the problem — add orchestration only when the task actually needs it.** Most features here are a single augmented call: a prompt, the relevant tools, and a Zod schema for the output. Reach for a multi-step agent loop only when the model genuinely has to decide *which* tools to call and in *what order* for an open-ended problem — not by default, and not because it looks more sophisticated. An unnecessary agent loop is just more surface area for the same job a single call would do.
 

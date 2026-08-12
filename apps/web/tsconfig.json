@@ -28,6 +28,9 @@
       "@gridstream/shared": [
         "../../packages/shared/src/index.ts"
       ],
+      "@gridstream/ai-config": [
+        "../../packages/ai-config/src/index.ts"
+      ],
     },
     "incremental": true,
     "plugins": [

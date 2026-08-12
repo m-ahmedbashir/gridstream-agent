@@ -1,12 +1,5 @@
-import { createOpenAI } from '@ai-sdk/openai';
 import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, streamText, toUIMessageStream } from 'ai';
-
-// Route through OpenRouter so the chat assistant can use the same free
-// vision/text models as the extraction pipeline (no paid Groq required).
-const openrouter = createOpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
+import { DEFAULT_MODEL_KEY, resolveModel } from '@gridstream/ai-config';
 
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 30;
@@ -96,7 +89,10 @@ export async function POST(req: Request) {
     const modelMessages = await convertToModelMessages(normalizedMessages as never[]);
 
     const result = streamText({
-      model: openrouter('nvidia/nemotron-nano-12b-v2-vl:free'),
+      // Same registry apps/api's diagnostic agent resolves through — the
+      // default key happens to be this exact OpenRouter free vision model,
+      // so this call needs no model id of its own to stay in sync with it.
+      model: await resolveModel(DEFAULT_MODEL_KEY),
       instructions: `You are a helpful assistant for maintain-agent, an AI-powered industrial maintenance planner.
 
     Security policy (must follow at all times):

@@ -29,10 +29,10 @@ jest.mock('ai', () => ({
 
 // resolveModel() itself dynamically imports a real @ai-sdk/* provider
 // package (same reason as above) — mocked out for the same reason, not
-// because its own logic needs testing here (that's model-registry's own
-// concern, verified separately in Stage 4 via a standalone ts-node script
-// specifically because it can't run under Jest either).
-jest.mock('../../common/ai/model-registry', () => ({
+// because its own logic needs testing here (that's @gridstream/ai-config's
+// own concern, verified separately in Stage 4 via a standalone ts-node
+// script specifically because it can't run under Jest either).
+jest.mock('@gridstream/ai-config', () => ({
     DEFAULT_MODEL_KEY: 'mock-model-key',
     resolveModel: jest.fn().mockResolvedValue({}),
 }));

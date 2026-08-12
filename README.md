@@ -33,25 +33,29 @@ flowchart LR
 
     subgraph Frontend["apps/web — Next.js 16"]
         UI["Dashboard UI<br/>(Clerk-authenticated)"]
+        CHAT["/api/chat route<br/>(Route Handler)"]
     end
 
     subgraph Backend["apps/api — NestJS"]
         API["REST API"]
         DB_SVC["DbService<br/>(Drizzle ORM)"]
-        AI_SVC["model-registry.ts<br/>(provider-agnostic)"]
         CRYPTO["BYOK encryption<br/>(AES-256-GCM)"]
     end
 
     ZOD[("packages/shared<br/>Zod schemas")]
+    AI_CFG[("packages/ai-config<br/>model-registry.ts")]
     PG[("PostgreSQL")]
     PROVIDERS["Groq / OpenAI /<br/>Anthropic / OpenRouter"]
     CLERK["Clerk Auth"]
 
     UI -->|Zod-typed requests| API
+    UI -->|chat messages| CHAT
     UI -.->|session| CLERK
     API --> DB_SVC --> PG
-    API --> AI_SVC --> PROVIDERS
     API --> CRYPTO
+    API -.->|imports| AI_CFG
+    CHAT -.->|imports| AI_CFG
+    AI_CFG --> PROVIDERS
     UI -.->|imports| ZOD
     API -.->|imports| ZOD
 
@@ -60,6 +64,7 @@ flowchart LR
     style PROVIDERS fill:#7c3aed,color:#fff
     style CLERK fill:#b45309,color:#fff
     style ZOD fill:#334155,color:#fff
+    style AI_CFG fill:#334155,color:#fff
 ```
 
 No `DeviceAsset`/`TelemetryLog`/ingestion queue exists in this diagram on purpose — see the next section for what's real today versus what's still ahead.
@@ -73,7 +78,7 @@ No `DeviceAsset`/`TelemetryLog`/ingestion queue exists in this diagram on purpos
 **What's live today:**
 - Clerk authentication on the frontend
 - A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
-- A provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`) — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
+- A provider-agnostic AI model registry (`packages/ai-config/src/model-registry.ts`), shared by both apps — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
 - `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, a Redis/BullMQ ingestion pipeline with a telemetry simulator (off by default), and the diagnostic agent (`apps/api/src/modules/diagnostics/`) that turns a safety-bound breach into a Zod-validated `FaultDiagnostic` sitting at `PENDING_APPROVAL`
 
@@ -155,10 +160,10 @@ The output schema (what the model must return) and any request/response DTOs liv
 
 ### Rules that don't bend
 
-- **One model registry, always.** `apps/api/src/common/ai/model-registry.ts` is the only place a provider SDK gets imported. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
+- **One model registry, always, shared by both apps.** `packages/ai-config/src/model-registry.ts` is the only place a provider SDK gets imported — used by `apps/api`'s services and `apps/web`'s `/api/chat` route alike. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
 - **No tools needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema.
 - **Tools needed → `generateText()` with `tools`, not `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. When the agent has to investigate before answering, that's `generateText()` with `tools` and a bounded `stopWhen`.
-- **A tool-calling loop that must end in a structured decision → a schema-only "final answer" tool, no `execute`.** The model calls it once; the AI SDK validates the call's input against `inputSchema` for you (no manual JSON parsing, no malformed-response repair logic — that class of bug doesn't exist here), and having no result to continue on is what makes the loop stop there. See `diagnostics.service.ts`'s `submitDiagnosis` tool.
+- **A tool-calling loop that must end in a structured decision → `output: Output.object({ schema })`, read `result.output`.** The AI SDK's native mechanism for "investigate freely via `tools`, then bind the final answer to a schema" — no manual JSON parsing, no malformed-response repair logic, no dummy tool needed to force a stop. See `diagnostics.service.ts`.
 - **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model. If the caller already knows a value for certain (which device this is), close over it when building the tool instead of asking the model to supply it.
 - **The model never computes a fact.** Financial estimates, severity thresholds, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript. The model writes prose around numbers it's handed, never numbers of its own.
 - **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first, with that status set deterministically by the service — never taken from the model's own output. Nothing downstream executes without an explicit human action.
@@ -168,7 +173,7 @@ The output schema (what the model must return) and any request/response DTOs liv
 ## 🛠 Tech Stack
 
 - **Backend:** NestJS, PostgreSQL via **Drizzle ORM** (`drizzle-orm` + `pg` — not Prisma)
-- **AI:** Vercel AI SDK, routed through a provider-agnostic model registry (Groq, OpenAI, Anthropic, OpenRouter)
+- **AI:** Vercel AI SDK, routed through a provider-agnostic model registry (Groq, OpenAI, Anthropic, OpenRouter) shared by both apps via `packages/ai-config`
 - **Frontend:** Next.js 16 (App Router), Clerk auth, Tailwind CSS, shadcn/ui, TanStack Query
 - **Validation:** Zod, shared between both apps via `packages/shared`
 - **Auth:** Clerk (frontend-only — no backend session/RBAC layer yet)
@@ -191,12 +196,13 @@ gridstream-agent/
 │       └── src/
 │           ├── common/
 │           │   ├── db/           # Drizzle schema.ts + DbService (pg Pool + Drizzle instance)
-│           │   ├── crypto/       # BYOK AES-256-GCM encryption
-│           │   └── ai/           # model-registry.ts — the only place a provider SDK is imported
+│           │   └── crypto/       # BYOK AES-256-GCM encryption
 │           └── modules/
 │               └── users/        # Clerk-linked settings, BYOK key management
 ├── packages/
-│   └── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
+│   ├── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
+│   └── ai-config/                # @gridstream/ai-config — model-registry.ts, the only place a provider
+│                                  # SDK is imported; server-side-only, shared by both apps
 ├── AGENTS.md                    # rules for any coding agent working in this repo
 ├── REFACTOR_PROGRESS.md         # stage-by-stage build log
 ├── turbo.json

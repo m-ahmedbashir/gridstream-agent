@@ -1046,3 +1046,172 @@ located in `result.toolCalls` and re-parsed).
 - Same as the entry above — no live model/database/Redis in this
   environment, Stage 6 still owns surfacing `PENDING_APPROVAL` rows to a
   human, and this stage remains **uncommitted**.
+
+---
+
+## 2026-08-12 — New package: `packages/ai-config`, replacing a real duplication
+
+Prompted by a direct question about whether the model registry should live
+somewhere shared, "like stagewise has." Checked the actual
+`stagewise-io/stagewise` GitHub repo before answering rather than guessing:
+its `packages/` directory (`agent-core`, `agent-shell`, `icons`, `karton`,
+`stage-ui`, `tailwindcss-color-modifiers`, `typescript-config`) has no
+`ai-config`-shaped package — makes sense for that project, since it's an IDE
+where the user connects *any* provider at runtime, not a small fixed
+registry baked into the build. So the premise as stated wasn't quite right —
+but the underlying instinct was: checking `apps/web/src/app/api/chat/route.ts`
+turned up a real, already-existing duplication of `apps/api`'s
+`model-registry.ts` — its own hand-rolled `createOpenAI({ baseURL:
+'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY })`
+plus a hardcoded `'nvidia/nemotron-nano-12b-v2-vl:free'` model id, which is
+byte-for-byte the same OpenRouter setup as the registry's
+`'openrouter:nemotron-nano-12b-v2-vl-free'` entry — just copied by hand into
+a second file in a second app. This is exactly the "concrete need" the
+Stage 2 plan entry (see above) said would justify a `packages/ai-config`
+split later, rather than speculatively up front.
+
+### Why not fold it into `packages/shared`
+
+`packages/shared` gets bundled into `apps/web`'s browser build the moment a
+client component imports a derived type from it. `resolveModel()` does
+server-only things — dynamic `import()` of provider SDKs, reads secret
+provider API keys from `process.env` — that must never end up in client JS.
+A separate package, imported only by server-side code (NestJS services,
+Next.js Route Handlers — both run in Node, never the browser), keeps that
+boundary intact rather than relying on every future contributor remembering
+not to import it from a client component.
+
+### What changed
+
+- **New package `packages/ai-config/`** (`@gridstream/ai-config`) — same
+  shape as `packages/shared`: `package.json`, `tsconfig.json` (`module:
+  commonjs`, matching both consumers' own module system), `src/model-
+  registry.ts` (moved from `apps/api/src/common/ai/model-registry.ts`
+  verbatim except for a doc-comment update generalizing "apps/api compiles
+  to CommonJS" to name both current consumers), `src/index.ts` re-exporting
+  it. Depends directly on `ai`, `@ai-sdk/groq`, `@ai-sdk/openai`,
+  `@ai-sdk/anthropic` — the only place any of these get imported, now across
+  *both* apps, not just `apps/api`.
+- **`apps/api`** — deleted `src/common/ai/` (now empty). `diagnostics.service.ts`,
+  `diagnostics.service.spec.ts` (`jest.mock()` path updated), and
+  `users.service.ts` now import from `@gridstream/ai-config` instead of the
+  relative `../../common/ai/model-registry` path. `package.json`: added
+  `@gridstream/ai-config: workspace:*`, removed the now-unused direct
+  `@ai-sdk/anthropic`/`@ai-sdk/groq`/`@ai-sdk/openai` dependencies (`ai`
+  itself stays — `diagnostics.service.ts` and the tool files still call
+  `generateText`/`tool`/`Output` directly, that's the core SDK, not a
+  provider).
+- **`apps/web`** — `src/app/api/chat/route.ts` no longer imports
+  `@ai-sdk/openai` or constructs its own OpenRouter client; it now calls
+  `resolveModel(DEFAULT_MODEL_KEY)` from `@gridstream/ai-config`. Since
+  `DEFAULT_MODEL_KEY` already *is* the OpenRouter free vision model this
+  route was hardcoding, the route needs no model id of its own anymore — it
+  automatically stays in sync with whatever `apps/api` treats as the
+  default. The existing `OPENROUTER_API_KEY` presence check at the top of
+  `POST()` was left as-is (still accurate: that's the exact env var
+  `resolveModel`'s `'openrouter'` branch reads). `package.json`: added
+  `@gridstream/ai-config: workspace:*`, removed `@ai-sdk/openai` (no longer
+  used directly) and `@ai-sdk/groq` (confirmed via grep to have had zero
+  imports anywhere in `apps/web/src` even before this change — pre-existing
+  dead dependency, removed as a minor byproduct of touching this file
+  rather than a change of its own). `tsconfig.json` got a
+  `@gridstream/ai-config` path alias matching the existing `@gridstream/shared`
+  one. `apps/web`'s system prompt still says "maintain-agent, an AI-powered
+  industrial maintenance planner" — left untouched, same as every prior
+  mention of this in this file: a content/copy pass, not a wiring concern,
+  explicitly out of scope here.
+- **`AGENTS.md`** — "What this is" now mentions `packages/ai-config`
+  alongside `packages/shared`. Structure section: removed the `src/common/ai/`
+  line from `apps/api`'s tree, added a `packages/ai-config/` block (mirroring
+  `packages/shared/`'s), and a line under `apps/web/`'s tree noting
+  `api/chat/route.ts` as its one AI-calling file. New rule added alongside
+  the existing `packages/shared` browser-bundling rule: `packages/ai-config`
+  is server-side-only, never imported from a client component. "Model access
+  is centralized, permanently" paragraph and the LSP bullet under SOLID both
+  updated to the new path and explicitly note both apps resolve through the
+  same registry now. (Also fixed a stale "schema-only submit tool" mention
+  left over in the Structure section's `diagnostics/` description from
+  before the `Output.object()` refinement above — should have been updated
+  in that entry, caught here instead.)
+
+### Verification
+
+- `pnpm install` — picked up the new workspace package (`Scope: all 5
+  workspace projects`, up from 4).
+- `pnpm typecheck` — 4 packages now (`@gridstream/ai-config` included), all
+  pass.
+- `pnpm test` — 11 suites, 58 tests pass, same count — `users.service.spec.ts`
+  needed no mock changes (it exercises `MODEL_REGISTRY`/`DEFAULT_MODEL_KEY`
+  as plain values, which import fine statically; only `resolveModel()`'s
+  *internal* dynamic imports are the ESM-only concern, and that function
+  isn't called from that spec).
+- `pnpm build` — all 4 packages succeed, `apps/web`'s `/api/chat` route
+  still compiles.
+- Compiled backend boot — reaches both `UsersModule` and `DiagnosticsModule`
+  `dependencies initialized` with no error, then the same correct
+  `ECONNREFUSED`, confirming `@gridstream/ai-config` resolves correctly as a
+  real workspace package at compiled CommonJS runtime, not just under `tsc`.
+- Standalone runtime script — called `resolveModel('groq:compound-mini')`
+  from the relocated package directly (not just confirming the module
+  loads) and got back a real model object
+  (`{"specificationVersion":"v4",...,"modelId":"groq/compound-mini",...}`),
+  proving the dynamic-import-of-ESM-only-provider pattern still works
+  correctly from its new package location, not just that NestJS's DI
+  container didn't crash on the static import.
+
+### Still pending
+
+- `apps/web`'s chat route still can't be live-tested end-to-end (no
+  `OPENROUTER_API_KEY` in this environment) — verification here is limited
+  to "compiles and the shared resolution path is proven correct in
+  isolation," same ceiling as every other AI-calling code in this repo so
+  far.
+- This stage is **uncommitted**, same as everything else in this file.
+
+---
+
+## 2026-08-12 — Fixed a pre-existing invalid `modelKey` column default
+
+Found while relocating `model-registry.ts` above: `users.modelKey`'s Drizzle
+column default was `'groq:llama-4-scout'`, which has never been a valid
+`MODEL_REGISTRY` key (valid Groq keys are `'groq:compound-mini'`,
+`'groq:compound'`, `'groq:qwen3.6-27b'`) — predates this stage, not
+introduced by it. Currently unreachable in practice: `UsersService.getSettings()`
+reads `user?.modelKey || DEFAULT_MODEL_KEY` (a JS-level fallback that wins
+before the DB default ever matters for a read), and `updateSettings()`'s
+insert always sets `modelKey` explicitly (`(updates.modelKey as ModelKey) ??
+DEFAULT_MODEL_KEY`) — so no code path today actually inserts a row relying
+on the column default. Still a landmine: `resolveModel()` would throw
+reading `.provider` off `undefined` the moment anything ever did rely on it
+(a raw insert, a future migration script, a different future caller).
+
+### What changed
+
+- **`packages/shared/src/db/schema.ts`** — `modelKey`'s default changed to
+  `'openrouter:nemotron-nano-12b-v2-vl-free'`, the same value as
+  `@gridstream/ai-config`'s `DEFAULT_MODEL_KEY`. Added a comment explaining
+  why it's a literal instead of an import: `packages/shared` can't depend on
+  `packages/ai-config` (the former is bundled into `apps/web`'s browser
+  build, the latter is deliberately server-only), so this value has to be
+  kept in sync by hand rather than referencing the constant directly — the
+  tradeoff accepted for keeping the browser-bundle boundary from the ai-config
+  entry above intact.
+- **Migration regenerated from scratch** — the previous migration
+  (`0000_eminent_apocalypse.sql`) was never applied to any database (no
+  `DATABASE_URL` in this environment, same as every previous migration
+  regeneration in this file), so there was no live schema to preserve or
+  incrementally `ALTER`. Deleted it and its snapshot, regenerated fresh:
+  `apps/api/drizzle/0000_stiff_earthquake.sql` — identical to the previous
+  migration except `"model_key" text DEFAULT 'openrouter:nemotron-nano-12b-v2-vl-free' NOT NULL`
+  in place of the invalid default.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 pass.
+- `pnpm test` — 11 suites, 58 tests pass, unchanged (no test asserted on the
+  old default value, so nothing needed updating).
+
+### Still pending
+
+- Same as every prior schema change in this file — no `DATABASE_URL` here to
+  actually apply the migration against.

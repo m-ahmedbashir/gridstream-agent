@@ -1,0 +1,32 @@
+{
+  "name": "@gridstream/ai-config",
+  "version": "1.0.0",
+  "description": "Shared AI model registry for the gridstream-agent monorepo",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "Ahmed Bashir",
+  "license": "ISC",
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.38",
+    "@ai-sdk/groq": "^4.0.28",
+    "@ai-sdk/openai": "^4.0.40",
+    "ai": "^7.0.62"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.9.3"
+  }
+}

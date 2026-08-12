@@ -9,7 +9,7 @@ import {
   type TelemetryLog,
 } from '@gridstream/shared';
 import { DbService } from '../../common/db/db.service';
-import { DEFAULT_MODEL_KEY, resolveModel } from '../../common/ai/model-registry';
+import { DEFAULT_MODEL_KEY, resolveModel } from '@gridstream/ai-config';
 import { createGetHistoricalBaselineTool } from './tools/get-historical-baseline.tool';
 import { createGetHardwareManualTool } from './tools/get-hardware-manual.tool';
 

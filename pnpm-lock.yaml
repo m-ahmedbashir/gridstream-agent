@@ -14,15 +14,9 @@ importers:
 
   apps/api:
     dependencies:
-      '@ai-sdk/anthropic':
-        specifier: ^4.0.38
-        version: 4.0.38(zod@4.3.6)
-      '@ai-sdk/groq':
-        specifier: ^4.0.28
-        version: 4.0.28(zod@4.3.6)
-      '@ai-sdk/openai':
-        specifier: ^4.0.40
-        version: 4.0.40(zod@4.3.6)
+      '@gridstream/ai-config':
+        specifier: workspace:*
+        version: link:../../packages/ai-config
       '@gridstream/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -153,12 +147,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@ai-sdk/groq':
-        specifier: ^4.0.28
-        version: 4.0.28(zod@4.3.6)
-      '@ai-sdk/openai':
-        specifier: ^4.0.40
-        version: 4.0.40(zod@4.3.6)
       '@ai-sdk/react':
         specifier: ^4.0.65
         version: 4.0.65(react@19.2.4)(zod@4.3.6)
@@ -168,6 +156,9 @@ importers:
       '@clerk/themes':
         specifier: ^2.2.26
         version: 2.4.57(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@gridstream/ai-config':
+        specifier: workspace:*
+        version: link:../../packages/ai-config
       '@gridstream/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -418,6 +409,28 @@ importers:
       tw-animate-css:
         specifier: ^1.2.4
         version: 1.4.0
+
+  packages/ai-config:
+    dependencies:
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.38
+        version: 4.0.38(zod@4.3.6)
+      '@ai-sdk/groq':
+        specifier: ^4.0.28
+        version: 4.0.28(zod@4.3.6)
+      '@ai-sdk/openai':
+        specifier: ^4.0.40
+        version: 4.0.40(zod@4.3.6)
+      ai:
+        specifier: ^7.0.62
+        version: 7.0.62(zod@4.3.6)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.7
+        version: 22.19.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/shared:
     dependencies:
