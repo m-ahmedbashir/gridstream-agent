@@ -6,4 +6,5 @@ node_modules
 apps/**/.env
 apps/**/.env.local
 packages/shared/dist
+packages/ai-config/dist
 *.tsbuildinfo

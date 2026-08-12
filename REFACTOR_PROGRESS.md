@@ -10,10 +10,10 @@ stage must compile/typecheck clean before the next begins.
 |---|---|---|
 | 1 | Codebase audit & mapping | ✅ Done |
 | 2 | Monorepo workspace & package renaming | ✅ Done |
-| 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ✅ Done (commit pending) |
-| 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ✅ Done (commit pending) |
-| 5 | Vercel AI SDK diagnostic agent (generateText + tool calling) | ✅ Done (commit pending) |
-| 6 | Next.js VPP dashboard & HITL UI | ⬜ Not started |
+| 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ✅ Done, merged (PR #1) |
+| 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ✅ Done, merged (PR #2) |
+| 5 | Vercel AI SDK diagnostic agent (generateText + tool calling) | ✅ Done, merged (PR #3) |
+| 6 | Next.js VPP dashboard & HITL UI | ✅ Done |
 | 7 | Documentation, cleanup, final CI verification | ⬜ Not started |
 
 ---
@@ -1244,4 +1244,47 @@ Both were below the reporting threshold, but asked to fix them anyway — reason
 ### Still pending
 
 - No live model to confirm the `<device_data>` instruction actually changes real model behavior against a crafted `location` value — verified only that the code compiles, persists tag-stripped content correctly, and that the prompt structure itself is correct; the model-following-instructions half of this can't be tested without live provider credentials, same ceiling as every other AI-calling code in this repo.
-- This stage remains **uncommitted**, same as everything else in this file.
+
+**Note on "uncommitted":** Stages 3–5 above were, at time of writing, actually already committed and merged (PRs #1–#3) — the "uncommitted"/"commit pending" language in those entries had gone stale relative to the real repo state, since commits/merges happen outside this assistant's own actions (this assistant has never run `git commit`, per standing instruction) and weren't being tracked back into this file as they landed. Corrected in the status table above. Going forward, entries in this file describe what was *built and verified*, not commit status — check `git log`/`git status` directly for the latter.
+
+---
+
+## 2026-08-12 — Stage 6: Next.js VPP Dashboard & HITL UI
+
+Closes the gap every prior stage has pointed at: `FaultDiagnostic` rows have been reaching `PENDING_APPROVAL` since Stage 5 with nothing to see or act on them. This stage adds the dashboard surface and the two decisions confirmed with the user before building it: **real backend auth** (not the existing open trust model) for the new endpoints, and **scope = Alerts queue + Devices overview** (no telemetry charts/device-detail views yet).
+
+### Backend (`apps/api`)
+
+- **New `src/common/auth/`** — `ClerkAuthGuard` (`CanActivate`) verifies a Clerk session JWT via `@clerk/backend`'s `verifyToken()`, reading `Authorization: Bearer <token>`; fails closed if `CLERK_SECRET_KEY` isn't configured (throws immediately, doesn't let requests through unverified). `ClerkUserId` (`createParamDecorator`) exposes the verified identity to controllers. `@clerk/backend@2.33.0` was already resolvable (transitive dep of `@clerk/nextjs`) and — checked before assuming otherwise, given this session's repeated ESM-only pain with the AI SDK packages — ships a real CommonJS build, so no dynamic-import workaround was needed; a plain static import and a plain `jest.mock()` both worked immediately.
+- **`packages/shared/src/db/schema.ts`** — added `approvedAt`/`approvedBy` (both nullable) to `faultDiagnostics`, deferred since Stage 3 specifically for this. Used for both approve *and* reject — represents "who/when a human last decided this," not approval specifically. Migration regenerated from scratch (`0000_woozy_susan_delgado.sql`), same as every prior schema change in this file, since nothing's ever been applied to a live database here.
+- **`packages/shared/src/schemas/`** — first real use of this directory (left empty since Stage 3 for exactly this): `diagnostics.schema.ts` (`faultDiagnosticWithDeviceSchema`, `diagnosticsListResponseSchema`) and `devices.schema.ts` (`devicesListResponseSchema`) — composite API response shapes that aren't 1:1 with a table row, per AGENTS.md's rule.
+- **`DiagnosticsService`** gained `listDiagnostics()`, `approve()`, `reject()`. `listDiagnostics()` is the first real caller of Drizzle's relational query API (`db.query.faultDiagnostics.findMany({ with: { device: true } })`) — wired since Stage 3's `faultDiagnosticsRelations` but never used until now; every other query in this codebase uses the fluent `.select().from()` builder instead. `approve()`/`reject()` share an atomic conditional-update implementation (`UPDATE ... WHERE status = 'PENDING_APPROVAL'`) rather than read-then-write, specifically so two operators racing to decide the same diagnostic can't both succeed; a follow-up read on a no-op update distinguishes 404 (doesn't exist) from 409 (already decided) instead of one generic error either way.
+- **New `DiagnosticsController`** (`GET /diagnostics`, `PATCH /diagnostics/:id/approve`, `PATCH /diagnostics/:id/reject`) and **new `DevicesModule`** (`devices.service.ts` + `devices.controller.ts`, `GET /devices`) — both guarded by `ClerkAuthGuard`. Query params validated with an inline Zod schema per controller (a DTO used by one endpoint stays inline, per the minimal-footprint rule) rather than wiring up the still-unused `nestjs-zod` dependency. `DiagnosticsModule`/`DevicesModule` both now imported at the `app.module.ts` top level — `DiagnosticsModule` was previously only pulled in transitively via `TelemetryIngestionModule`, which registers its provider but not its (now-existing) controller.
+- **`main.ts`** — CORS tightened from `app.enableCors()` (wide open, any origin) to `app.enableCors({ origin: process.env.FRONTEND_URL ?? 'http://localhost:3000', credentials: true })`, directly motivated by adding endpoints worth protecting.
+
+### Frontend (`apps/web`)
+
+No backend-fetch pattern existed anywhere in this app before this stage — confirmed via exploration: `products`/`overview` use fake in-memory data, TanStack Query was wired in `providers.tsx` but never actually used for a real query.
+
+- **New `src/lib/api-client.ts`** — `apiFetch()`, the first (and only) HTTP client to `apps/api`. Attaches the caller's Clerk session token as a bearer token; the backend's `ClerkAuthGuard` verifies it.
+- **`src/features/diagnostics/`** — `hooks/use-diagnostics.ts` (`useDiagnosticsQuery` with `refetchInterval` polling — no websocket/queue-to-frontend infra exists, polling is the honest simple option for near-live updates on a human-review queue; `useApproveDiagnosticMutation`/`useRejectDiagnosticMutation`, invalidating the list on success), `components/columns.tsx`, `components/diagnostic-actions.tsx` (reuses the existing `AlertModal` confirmation pattern from `product-tables/cell-action.tsx`), `components/diagnostics-listing.tsx` (status-filter `Tabs` + the existing `DataTable` shadcn primitive).
+- **`src/features/devices/`** — same shape, read-only, no actions column.
+- **Deliberate deviation from the `products` feature's table pattern**: `products` drives pagination/filtering through `nuqs`-backed URL state via the `useDataTable` hook (`shallow: false`, triggering a full Next.js navigation/refetch on every page change) — appropriate for a server-rendered catalog, not for a live-refreshing, mutation-heavy queue. `DataTable`/`DataTablePagination` themselves turned out to be decoupled from `nuqs` (they just take a `table` prop), so this stage reuses those directly with a plain `useReactTable()` call and client-side pagination instead of pulling in the nuqs-coupled hook. The backend still supports `limit`/`offset` server-side pagination if a fleet ever outgrows a single fetched page (currently fetches `limit=100` per status tab) — the UI just doesn't need that complexity yet.
+- **Routes**: `app/dashboard/alerts/page.tsx`, `app/dashboard/devices/page.tsx` — `PageContainer` wrapper matching `dashboard/product/page.tsx`'s shape. No `<Suspense>` boundary around the client listing components: a plain `useQuery()` never suspends (that's `useSuspenseQuery`'s job), so wrapping it in `Suspense` would have been dead weight that looked functional but wasn't — caught and removed before verification.
+- **Nav**: two new `nav-config.ts` entries ("Active Alerts" → `/dashboard/alerts`, icon `warning`; "Devices" → `/dashboard/devices`, icon `devices`, a new `IconServer2` key added to `components/icons.tsx`, confirmed to exist in the installed `@tabler/icons-react` version before using it).
+
+### Verification
+
+- `pnpm typecheck` / `pnpm test` (72 tests, 13 new) / `pnpm build` — all pass across all 4 packages.
+- Compiled backend boot smoke test — `DiagnosticsModule`/`DevicesModule` both reach `dependencies initialized` cleanly (confirming `@clerk/backend` resolves fine at real CommonJS runtime), then the same correct `ECONNREFUSED`, same discipline as every prior stage.
+- **Frontend UI verification, and its real limits**: no browser automation tool was available this session, and `/dashboard/*` is Clerk-gated with no live Clerk credentials in this environment — a full interactive browser check wasn't possible, and that limitation is stated here rather than glossed over. What *was* verified: started the dev server and confirmed both new routes render their correct titles server-side with no error markers; confirmed (by checking pre-existing routes like `/dashboard/chat` behave identically) that the unauthenticated-request behavior is this environment's pre-existing Clerk keyless-mode setup, not something the new routes broke.
+
+### Housekeeping found along the way
+
+- `packages/ai-config/dist/*` was tracked in git despite the intent for it to be build output — same issue Stage 2 fixed for `packages/shared/dist`. Added to `.gitignore`, untracked with `git rm --cached` (files stay on disk).
+
+### Still pending
+
+- No live `DATABASE_URL`/`CLERK_SECRET_KEY`/backend running in this environment to exercise a real approve/reject click end-to-end.
+- Telemetry charts and a device-detail view were explicitly deferred out of this stage's confirmed scope.
+- Stage 7 (documentation, cleanup, final CI verification) is what's left on the original master plan.
