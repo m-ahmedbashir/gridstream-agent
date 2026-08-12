@@ -14,7 +14,7 @@ stage must compile/typecheck clean before the next begins.
 | 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ✅ Done, merged (PR #2) |
 | 5 | Vercel AI SDK diagnostic agent (generateText + tool calling) | ✅ Done, merged (PR #3) |
 | 6 | Next.js VPP dashboard & HITL UI | ✅ Done |
-| 7 | Documentation, cleanup, final CI verification | ⬜ Not started |
+| 7 | Documentation, cleanup, final CI verification | ✅ Done |
 
 ---
 
@@ -1288,3 +1288,44 @@ No backend-fetch pattern existed anywhere in this app before this stage — conf
 - No live `DATABASE_URL`/`CLERK_SECRET_KEY`/backend running in this environment to exercise a real approve/reject click end-to-end.
 - Telemetry charts and a device-detail view were explicitly deferred out of this stage's confirmed scope.
 - Stage 7 (documentation, cleanup, final CI verification) is what's left on the original master plan.
+
+---
+
+## 2026-08-12 — Stage 7: Documentation, cleanup, final CI verification
+
+The last stage on the original master plan. No new features — this pass finds and closes every doc/cleanup item this file itself has been flagging as deferred since as far back as the Stage 1 audit ("Candidate for deletion in Stage 7, not touched now"), plus a full accuracy pass over every doc now that the product is functionally complete end to end.
+
+### Deleted — dead weight found along the way
+
+- **`goal.md`** (root) — the original `maintain-agent` product brief: `MachineProfile`, `ComplianceService`, Prisma, `@maintain/shared`, GDPR-for-maintenance-reports. Entirely superseded by `README.md`/`AGENTS.md`/`REFACTOR_PROGRESS.md` and, worse, actively wrong about what this project is. Flagged as "historical/unmaintained" multiple times earlier in this file; never acted on until now.
+- **`apps/web/__CLEANUP__/`** — the starter template's own feature-flag stripper (scripts + "after removal" templates for optionally stripping Clerk/Kanban/Sentry). This app deliberately *keeps* Clerk and Sentry — neither was ever a removal candidate — and the folder's own `cleanup.md` says to delete it once done. Flagged as a "Stage 7 candidate" since the very first cleanup pass; deleted now.
+- **`apps/web/README.md` and `apps/web/AGENTS.md`** — found during this pass, not previously flagged: the *original, untouched* `next-shadcn-dashboard-starter` docs, sitting inside `apps/web/` this entire time. Generic SaaS-dashboard branding, recommends **Bun** as the package manager (this monorepo uses pnpm exclusively, root `AGENTS.md` says so explicitly), documents Kanban/Sentry/Clerk-Organizations features not part of this domain, and referenced the now-deleted `__CLEANUP__` folder. A coding agent poking around `apps/web/` could easily have picked up `apps/web/AGENTS.md` and followed genuinely wrong guidance (Bun over pnpm) from it. `apps/web/LICENSE` (MIT, © Kiranism) was **kept** — that's a real attribution requirement the starter's license imposes; the docs aren't, and root `README.md`'s Acknowledgments section already credits the starter by name and link.
+- **`apps/api/README.md`** — default `nest new` CLI scaffolding, zero project-specific content, no attribution requirement (unlike the web starter, this is just generator output, not a licensed template).
+
+### Fixed — stale copy and config
+
+- **`apps/web/src/app/api/chat/route.ts`** — system prompt, refusal message, and security-policy wording all still described "maintain-agent, an AI-powered industrial maintenance planner" and "maintenance reports, machine profiles, measures, and project plans." Rewritten for the actual domain: devices, telemetry, fault diagnostics, the Active Alerts approval workflow. Deliberately honest about what the chat assistant *can't* do — it has no live tool access to a user's actual device/alert data (no tools are wired to this route), so the prompt explicitly tells it to say so and point at the real dashboard pages rather than let it hallucinate device status.
+- **`apps/web/src/app/dashboard/chat/chat-view.tsx`** — the three suggestion-chip prompts were still maintenance-domain ("What maintenance measures are available?", "How is confidence calculated?", "What does plan approval do?"). Replaced with VPP-relevant ones.
+- **`.github/workflows/ci.yml`** — the `DATABASE_URL` env var on the install step carried a comment explaining it was needed because "`prisma generate` (runs via postinstall)... needs a syntactically valid `DATABASE_URL`" — Prisma was removed from this codebase stages ago, and neither the root nor `apps/api`'s `package.json` has a `postinstall` script anymore. Verified directly rather than assumed: ran `pnpm install --frozen-lockfile` locally with no `DATABASE_URL` set at all — clean, confirming the env var was genuinely unnecessary, not just the comment being stale. Removed it. **Added a `Build` step** (`pnpm build`) — CI previously only ran typecheck + test, never a real build; this session repeatedly found real bugs (TS2742 declaration-emit errors, ESM-only-package issues) that surfaced at build/boot time, not always at plain `tsc --noEmit` time, so CI not building at all was a real gap for a "final CI verification" pass to close, not scope creep.
+- **`README.md`** — full accuracy pass now that Stage 6 shipped:
+  - Node badge said `>=18.0.0`; AI SDK 7 has required Node ≥22 since the Stage 4/5 upgrade. Fixed.
+  - "Where this project is right now" still said the dashboard was "still ahead" and diagnostics "just sit in the database" — both wrong since Stage 6. Rewritten to state the loop works end to end, with an honest "What's not built yet" list (telemetry charts/device-detail view, severity-based auto-triage, broader backend authorization beyond the two guarded controllers, frontend test coverage) replacing the vague "still ahead" framing.
+  - The "Target architecture" section was explicitly captioned "the *plan*, not current behavior" and included a fictional severity-based auto-triage branch (`Auto-Log System Ticket` for low severity) that was never actually implemented — every diagnosis goes to `PENDING_APPROVAL` regardless of severity, unconditionally. Replaced with "How a fault gets diagnosed and approved," a corrected diagram matching the real, verified pipeline (including the atomic conditional-update approve/reject mechanism and the swallowed-trigger-error resilience behavior), since the plan is now real rather than aspirational.
+  - "Tech Stack" claimed "Auth: Clerk (frontend-only — no backend session/RBAC layer yet)" — no longer true; `ClerkAuthGuard` now does real backend session verification on two controllers. Corrected, including the honest caveat that it checks for *a* valid session, not role/permission, and other backend endpoints (`UsersController`) still use the older unverified trust model.
+  - Repo Structure tree gained the `diagnostics`/`devices`/`common/auth` backend modules and `apps/web`'s `lib/api-client.ts`/`features/diagnostics`/`features/devices`, none of which existed when that tree was last accurate.
+  - Environment variable instructions gained `CLERK_SECRET_KEY`/`FRONTEND_URL` (backend) and `NEXT_PUBLIC_API_URL` (frontend) — all added in Stage 6, never documented in the setup instructions. Also fixed the frontend env file name (`env.example.txt`, not `.env.example` as the doc claimed) and the `db:generate` comment's stale path (`apps/api/src/common/db/schema.ts` — that file hasn't existed since Stage 3 moved it to `packages/shared`).
+- **`CONTRIBUTING.md`** — still titled "Contributing to maintain-agent," linked `github.com/m-ahmedbashir/maintain-agent/issues` (wrong repo), used `pnpm --filter frontend`/`backend` (the actual filter names are `@gridstream/web`/`@gridstream/api`), pointed at a `README.md#-roadmap` section that doesn't exist, claimed Zod schemas "stay `.strict()`" (checked — genuinely never true, `.strict()` isn't used anywhere in `packages/shared`), and listed "good first issues" that were either already done (a provider-agnostic model registry — that's `packages/ai-config` now) or referenced deleted code (`extraction.service.ts`). Rewritten wholesale: correct repo name/filters, pre-PR checklist now includes `pnpm build` (matching the new CI step), and the "good first issues" list replaced with real current gaps pulled from README's "What's not built yet" section rather than invented ones. Confirmed `next lint`'s broken-in-Next-16 claim is still accurate before carrying it forward, rather than assuming.
+- **`CODE_OF_CONDUCT.md`** — checked, genuinely generic Contributor Covenant boilerplate with no domain-specific content. Left as-is.
+
+### Verification
+
+- `pnpm install --frozen-lockfile` with no `DATABASE_URL` set — clean (validates the CI env-var removal above).
+- `pnpm typecheck` / `pnpm test` (72 tests) / `pnpm build` — all pass across all 4 packages, matching exactly what the updated CI workflow now runs.
+- Compiled backend boot smoke test — same clean `DiagnosticsModule`/`DevicesModule` → correct `ECONNREFUSED` pattern as every prior stage.
+- Grepped the full repo for `__CLEANUP__`/`goal.md`/`maintain-agent`/`@maintain/`/`MachineProfile`/`Prisma` references after every deletion and rewrite — nothing dangling.
+
+### Still pending
+
+- No live database/Redis/Clerk credentials in this environment, same ceiling as every stage before this one — nothing here changes that.
+- The "What's not built yet" items in `README.md` (telemetry charts, device-detail view, severity-based auto-triage, broader backend authorization, frontend test coverage) are genuine open work, not blockers — they were never in scope for any of the 7 stages on the original master plan.
+- All 7 stages of the original master plan are now done. Future work is genuinely new scope, not a pending stage.

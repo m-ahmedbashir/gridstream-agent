@@ -64,7 +64,6 @@ apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/features/<feature>/     feature-scoped components + TanStack Query hooks (hooks/use-*.ts) — see
                                 features/diagnostics/ and features/devices/ for the reference shape
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
-  __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
 
 packages/shared/            imported by both apps as `@gridstream/shared`
   src/db/schema.ts             THE single source of truth: Drizzle table defs + Zod schemas derived from
