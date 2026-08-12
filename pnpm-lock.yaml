@@ -412,10 +412,19 @@ importers:
 
   packages/shared:
     dependencies:
+      drizzle-orm:
+        specifier: ^0.44.6
+        version: 0.44.7(@opentelemetry/api@1.9.0)(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.21.0)(pg@8.23.0)(prisma@6.19.3(typescript@5.9.3))
+      drizzle-zod:
+        specifier: ^0.8.3
+        version: 0.8.3(drizzle-orm@0.44.7(@opentelemetry/api@1.9.0)(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.21.0)(pg@8.23.0)(prisma@6.19.3(typescript@5.9.3)))(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.7
+        version: 22.19.13
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -4618,6 +4627,12 @@ packages:
         optional: true
       sqlite3:
         optional: true
+
+  drizzle-zod@0.8.3:
+    resolution: {integrity: sha512-66yVOuvGhKJnTdiqj1/Xaaz9/qzOdRJADpDa68enqS6g3t0kpNkwNYjUuaeXgZfO/UWuIM9HIhSlJ6C5ZraMww==}
+    peerDependencies:
+      drizzle-orm: '>=0.36.0'
+      zod: ^3.25.0 || ^4.0.0
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -11794,6 +11809,11 @@ snapshots:
       '@types/pg': 8.21.0
       pg: 8.23.0
       prisma: 6.19.3(typescript@5.9.3)
+
+  drizzle-zod@0.8.3(drizzle-orm@0.44.7(@opentelemetry/api@1.9.0)(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.21.0)(pg@8.23.0)(prisma@6.19.3(typescript@5.9.3)))(zod@4.3.6):
+    dependencies:
+      drizzle-orm: 0.44.7(@opentelemetry/api@1.9.0)(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.21.0)(pg@8.23.0)(prisma@6.19.3(typescript@5.9.3))
+      zod: 4.3.6
 
   dunder-proto@1.0.1:
     dependencies:

@@ -14,5 +14,5 @@ export interface ApiResponse<T = unknown> {
 }
 
 // ─── Re-export everything below as you add modules ────────────────────────────
-// (empty for now — the maintenance-domain schemas were removed; the VPP/telemetry
-// domain schemas land here in a future stage)
+
+export * from './db/schema';

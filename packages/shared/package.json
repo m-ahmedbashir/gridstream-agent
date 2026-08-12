@@ -19,10 +19,13 @@
   "author": "Ahmed Bashir",
   "license": "ISC",
   "dependencies": {
+    "drizzle-orm": "^0.44.6",
+    "drizzle-zod": "^0.8.3",
     "zod": "^4.3.6"
   },
   "packageManager": "pnpm@10.30.3",
   "devDependencies": {
+    "@types/node": "^22.10.7",
     "typescript": "^5.9.3"
   }
 }

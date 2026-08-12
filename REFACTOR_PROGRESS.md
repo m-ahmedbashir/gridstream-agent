@@ -10,7 +10,7 @@ stage must compile/typecheck clean before the next begins.
 |---|---|---|
 | 1 | Codebase audit & mapping | ✅ Done |
 | 2 | Monorepo workspace & package renaming | ✅ Done |
-| 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ⬜ Not started |
+| 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ✅ Done (commit pending) |
 | 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ⬜ Not started |
 | 5 | Vercel AI SDK diagnostic agent (generateObject + tool calling) | ⬜ Not started |
 | 6 | Next.js VPP dashboard & HITL UI | ⬜ Not started |
@@ -525,3 +525,132 @@ domain pivot (Stage 3), not this scope-name cleanup.
   reads `@gridstream/api, @gridstream/shared, @gridstream/web`.
 - `pnpm typecheck` — 4/4 pass. `pnpm test` — 3 suites, 25 tests pass.
   `pnpm build` — both apps succeed.
+
+---
+
+## 2026-08-12 — Stage 3: DeviceAsset/TelemetryLog/FaultDiagnostic — built, awaiting review
+
+**Not committed** — working-tree changes only, per explicit instruction to stop
+before committing so this can be reviewed first.
+
+### Design change from the original Stage 3 spec: one definition, not two
+
+The original plan (and the Stage-2-era file-level notes above) implied a Drizzle
+table plus a hand-written, separately-maintained Zod schema per model. Changed
+that on request: the Drizzle table is now the *only* hand-written definition;
+its Zod schema is *derived* from it via `drizzle-zod`'s `createSelectSchema()`/
+`createInsertSchema()`. One definition cascades to the migration, the Zod
+validator, and every `z.infer<>` type both apps use — nothing to keep in sync
+by hand. Checked compatibility first: `drizzle-zod@0.8.3` requires `zod ^4.0.0`
+(have `^4.3.6`) and `drizzle-orm >=0.36.0` (have `^0.44.6`) — both satisfied.
+
+### What changed
+
+- **`packages/shared/src/db/schema.ts`** (new) — the single source of truth for
+  every table:
+  - `users` — moved here from `apps/api/src/common/db/schema.ts` (unchanged
+    fields), so all four tables live in one place instead of three in
+    `apps/api` and one in `packages/shared`.
+  - `deviceAssets` — `id`, `deviceType` (`pgEnum`: SOLAR/BATTERY/HEAT_PUMP/
+    WALLBOX), `serialNumber` (unique), `location` (nullable), `status`
+    (`pgEnum`: ONLINE/OFFLINE/MAINTENANCE — **not in the original spec**,
+    which only said "status" with no values; picked a minimal reasonable
+    default set, flagged here since nothing downstream depends on these
+    exact three yet), `createdAt`/`updatedAt`.
+  - `telemetryLogs` — `id`, `deviceId` (FK → `deviceAssets.id`, **cascade
+    delete** — explicit decision, see below), `timestamp` (defaults to
+    `now()`), `solarProductionKwh`/`batterySoC`/`batteryTempCelsius`/
+    `gridVoltage` (all nullable — not every device type reports every
+    metric, e.g. a WALLBOX has no solar production).
+  - `faultDiagnostics` — `id`, `deviceId` (FK, cascade delete), `severity`
+    (`pgEnum`: LOW/MEDIUM/HIGH/CRITICAL), `faultType`, `summary`,
+    `recommendedAction`, `requiresImmediateDispatch` (boolean), `status`
+    (`pgEnum`: PENDING_APPROVAL/APPROVED/REJECTED, defaults to
+    PENDING_APPROVAL), `createdAt`. Deliberately did *not* add
+    `approvedAt`/`approvedBy` (the old `Plan` table had these) — not in the
+    spec, not needed yet; add when Stage 6's approve/reject flow actually
+    needs them.
+  - **FK cascade decision (asked, not assumed):** deleting a `DeviceAsset`
+    cascades to delete its `TelemetryLog`/`FaultDiagnostic` rows. Confirmed
+    explicitly rather than guessed, since the alternative (restrict/block
+    delete to preserve history on decommissioned devices) was a real,
+    equally-defensible option.
+  - `relations()` for both FK tables (`deviceAssetsRelations`,
+    `telemetryLogsRelations`, `faultDiagnosticsRelations`) — enables
+    Drizzle's typed relational query API (`db.query.deviceAssets.findMany({
+    with: { telemetryLogs: true } })`), which Stage 4/5/6 will need
+    immediately for any device-with-history query. Not speculative — the
+    very next stage needs this.
+  - Derived per table: `<name>SelectSchema`, `<name>InsertSchema` (Zod, via
+    drizzle-zod) and `<Name>`/`New<Name>` types (`z.infer<>` of those).
+- **`packages/shared/src/index.ts`** — now re-exports `./db/schema`.
+- **`packages/shared/package.json`** — added `drizzle-orm`, `drizzle-zod`
+  (deps) and `@types/node` (devDep — see the crypto fix below).
+- **A real cross-environment bug caught before it shipped:** the first draft
+  used `import { randomUUID } from 'crypto'` (Node's built-in module) for
+  each table's `id` default. Typecheck failed immediately —
+  `packages/shared` has no `@types/node`, correctly, since it's meant to be
+  bundled into `apps/web` too. Fixed by switching to the *global*
+  `crypto.randomUUID()` (Web Crypto API — a standard global in both Node 19+
+  and every modern browser, no import needed at all), and added
+  `@types/node` as a **devDependency only** (type-checking, not a runtime
+  import) so the global is typed. This wasn't just a types error to silence
+  — a Node-module import here would have broken `apps/web`'s build the
+  moment it imported a type from this file, since bundlers can't resolve
+  Node's `crypto` for a browser bundle.
+- **`apps/api/src/common/db/schema.ts`** — deleted (superseded).
+- **`apps/api/src/common/db/db.service.ts`** — `import * as schema from
+  './schema'` → `import * as schema from '@gridstream/shared'`. Verified
+  the extra non-table exports in that namespace (Zod schemas, inferred
+  types) don't confuse Drizzle's `NodePgDatabase<typeof schema>` — it
+  identifies tables/relations by internal symbol, not by the export list —
+  via a full typecheck pass, not assumed.
+- **`apps/api/src/modules/users/users.service.ts`** — same import-path
+  change for the `users` table.
+- **`apps/api/drizzle.config.ts`** — `schema` path updated to
+  `../../packages/shared/src/db/schema.ts`.
+- **Migration regenerated** — old one only had `users` (never applied to any
+  database, so nothing to preserve); new one
+  (`apps/api/drizzle/0000_eminent_apocalypse.sql`) has all four tables, four
+  `CREATE TYPE ... AS ENUM` statements, and both FK constraints with
+  `ON DELETE cascade`. Not applied anywhere — still no `DATABASE_URL` in
+  this environment.
+- **`AGENTS.md`** — Structure section: `packages/shared/src/db/schema.ts`
+  documented as the single source of truth; `apps/api/src/common/db/`
+  updated to reflect `schema.ts` no longer lives there. Added a rule that
+  any runtime code inside a table definition (e.g. `$defaultFn`) must work
+  in both Node and a browser bundle, citing the crypto fix as the concrete
+  reason. Type-safety section rewritten: database rows are now explicitly
+  "derived, not hand-written separately" as their own bullet, distinct from
+  the hand-written-Zod-schema path for non-DB-row shapes.
+
+### Verification
+
+- `pnpm install` — clean, `drizzle-zod` resolved.
+- `drizzle-kit generate` — 4 tables, 9 columns on `fault_diagnostics` (1 FK),
+  7 on `telemetry_logs` (1 FK), 7 on `device_assets`, 7 on `users`, matching
+  the design above exactly.
+- `pnpm typecheck` — 4/4 pass, including `apps/api`'s `DbService` against the
+  full shared-package namespace.
+- `pnpm test` — 3 suites, 25 tests pass (one run measured 55s instead of the
+  usual ~2s — re-ran directly with `npx jest`, got 1.8s; confirmed a one-off
+  cold-compile, not a regression, before moving on).
+- `pnpm build` — both apps succeed (`/api/chat` route included). First
+  attempt hit a `.next/lock` conflict from an earlier build still running
+  concurrently in the background — not a code issue; cleared the stale lock
+  and re-ran cleanly.
+- Compiled backend boot (`node dist/src/main.js`) against an unreachable
+  `DATABASE_URL` — reaches a real `ECONNREFUSED` from the health check's
+  actual `SELECT 1` query via the shared schema, same as the last two times
+  this exact smoke test was used to verify a DB-layer change. Confirms the
+  whole chain (packages/shared → DbService → real query execution) works
+  end to end, not just that it typechecks.
+
+### Still pending
+
+- Applying the migration to a real database (no `DATABASE_URL` here).
+- No controllers/services/endpoints for these tables yet — deliberately out
+  of Stage 3's scope per AGENTS.md's minimal-footprint rule. Stage 4
+  (ingestion) and Stage 6 (dashboard) are what actually query them.
+- This entire stage is **uncommitted** — review the working tree and commit
+  (or request changes) when ready.
