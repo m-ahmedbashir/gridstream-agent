@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DbService } from '../../common/db/db.service';
-import { users } from '../../common/db/schema';
+import { users } from '@gridstream/shared';
 import { EncryptionService } from '../../common/crypto/encryption.service';
 import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, type ModelKey } from '../../common/ai/model-registry';
 

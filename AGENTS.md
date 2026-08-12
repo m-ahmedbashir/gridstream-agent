@@ -31,10 +31,10 @@ SOLID at the file level, as you write, not as a retrofit:
 ```
 apps/api/                  NestJS backend (deployed to Railway)
   src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts, tools/ (for an AI-calling feature — see "Building an AI feature")
-  src/common/db/              Drizzle: schema.ts (table defs), db.service.ts (pg Pool + Drizzle instance)
+  src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared (no schema.ts here anymore)
   src/common/crypto/          BYOK AES-256-GCM encryption
   src/common/ai/              model-registry.ts — the only place a provider SDK is imported, ever
-  drizzle.config.ts           drizzle-kit config (schema path, migration output dir)
+  drizzle.config.ts           drizzle-kit config — schema path points at packages/shared/src/db/schema.ts
   drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
 
 apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
@@ -43,15 +43,21 @@ apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
   __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
 
-packages/shared/            Zod domain schemas + types, imported by both apps as `@gridstream/shared`
-  src/schemas/                 currently empty — add new domain schemas here as they're built
+packages/shared/            imported by both apps as `@gridstream/shared`
+  src/db/schema.ts             THE single source of truth: Drizzle table defs + Zod schemas derived from
+                                them via drizzle-zod (createSelectSchema/createInsertSchema) + inferred
+                                types. apps/api imports the tables to bind its Drizzle instance; apps/web
+                                imports only the derived Zod schemas/types, never the raw tables.
+  src/schemas/                 hand-written Zod schemas for shapes that aren't 1:1 with a DB row (request/
+                                response bodies, AI structured-output schemas) — land here as needed
 ```
 
 Rules from this layout:
 
-- `packages/shared` never imports from `apps/api` or `apps/web` — it's plain Zod/TS, must stay usable from either app or a script.
+- `packages/shared` never imports from `apps/api` or `apps/web` — it's plain Zod/TS/drizzle-orm's *schema-builder* (no `pg` driver, no DB connection), must stay usable from either app or a script, including a browser bundle.
 - A domain type is defined once, in `packages/shared`, and inferred everywhere else via `z.infer<typeof Schema>` — never hand-write a duplicate interface.
-- `src/common/db/schema.ts` is the only place table shapes are defined; a service reads/writes through the Drizzle instance on `DbService`, never raw SQL, unless a migration genuinely needs it. A row type is `typeof table.$inferSelect` / `typeof table.$inferInsert`, never hand-duplicated.
+- `packages/shared/src/db/schema.ts` is the only place table shapes are defined. Its Zod schemas are *derived* from the tables via drizzle-zod — never hand-written separately alongside them. `apps/api`'s `DbService` imports the table objects directly from `@gridstream/shared`; it never redefines a table locally. A service reads/writes through `DbService`'s Drizzle instance, never raw SQL, unless a migration genuinely needs it.
+- Any `$defaultFn`/runtime code inside a table definition must work in both Node and a browser bundle (e.g. the global `crypto.randomUUID()`, not `import { randomUUID } from 'crypto'`) — this file is bundled into `apps/web` the moment it imports a derived type from it.
 
 ## Adding a new feature — minimal footprint
 
@@ -63,10 +69,11 @@ Rules from this layout:
 
 A shape gets defined **once**, in `packages/shared`, and both apps import that same definition — never redeclared per-consumer.
 
-- **Define once:** a new request or response shape is a Zod schema added to `packages/shared/src/schemas/`, exported from `packages/shared/src/index.ts`. Not inline in a controller, not inline in a frontend hook.
+- **Database rows:** `packages/shared/src/db/schema.ts` defines the Drizzle table; its Zod schema is *derived* from that table via `drizzle-zod`'s `createSelectSchema()`/`createInsertSchema()` — never hand-written separately. One definition (the table) cascades to the migration, the derived Zod schema, and every `z.infer<>` type both apps use. Adding a column means editing the table once — the Zod schema and every inferred type update automatically.
+- **Everything else** (a request/response shape that isn't 1:1 with a table row — an AI structured-output schema, a composite API response): a hand-written Zod schema added to `packages/shared/src/schemas/`, exported from `packages/shared/src/index.ts`. Not inline in a controller, not inline in a frontend hook.
 - **Backend reuses it for everything:** the same schema validates the incoming request, binds the AI SDK call (`generateObject`), and — via `z.infer<typeof Schema>` — becomes the service's parameter/return type. One definition, three jobs.
 - **Frontend reuses the identical import:** a TanStack Query hook's return type is `z.infer<typeof Schema>` imported from `@gridstream/shared`, not a hand-typed `interface` that happens to look the same today. If the shape also needs client-side form validation, pass the same schema straight to `zodResolver()` instead of writing a parallel validation version.
-- Never hand-write a type duplicating a DB row shape either — derive it from the schema/ORM, don't redeclare it.
+- Never hand-write a type duplicating a DB row shape — import the derived type (`DeviceAsset`, `NewFaultDiagnostic`, etc.) from `@gridstream/shared` instead.
 
 ## Building an AI feature (Vercel AI SDK)
 
