@@ -1,5 +1,5 @@
 {
-  "id": "fbc22781-30ea-40c8-9105-c3ad1fa5e0b9",
+  "id": "1ee3ad81-abb3-498b-bd0e-9d670a3db387",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -256,7 +256,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'groq:llama-4-scout'"
+          "default": "'openrouter:nemotron-nano-12b-v2-vl-free'"
         },
         "encrypted_api_key": {
           "name": "encrypted_api_key",

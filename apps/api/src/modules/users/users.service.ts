@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { DbService } from '../../common/db/db.service';
 import { users } from '@gridstream/shared';
 import { EncryptionService } from '../../common/crypto/encryption.service';
-import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, type ModelKey } from '../../common/ai/model-registry';
+import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, type ModelKey } from '@gridstream/ai-config';
 
 export interface SettingsUpdate {
   planApprovalMode?: string;

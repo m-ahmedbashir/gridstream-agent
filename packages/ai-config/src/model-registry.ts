@@ -18,11 +18,12 @@ export interface ModelDescriptor {
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 /**
- * Every model any AI-calling feature can be pointed at. This is the *only*
- * place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`, `@ai-sdk/anthropic`)
- * gets imported — a feature resolves a model through `resolveModel()` below,
- * never by importing a provider SDK itself. Swapping the default model is a
- * one-line change to DEFAULT_MODEL_KEY, not a code change to any caller.
+ * Every model any AI-calling feature — in either app — can be pointed at.
+ * This is the *only* place a provider SDK (`@ai-sdk/groq`, `@ai-sdk/openai`,
+ * `@ai-sdk/anthropic`) gets imported — a feature resolves a model through
+ * `resolveModel()` below, never by importing a provider SDK itself. Swapping
+ * the default model is a one-line change to DEFAULT_MODEL_KEY, not a code
+ * change to any caller.
  */
 export const MODEL_REGISTRY = {
     // Free on Groq; text-only.
@@ -84,13 +85,15 @@ export function getModelDescriptor(key: ModelKey): ModelDescriptor {
  * Async and importing each provider SDK lazily (`await import(...)`) rather
  * than via a static top-level import is deliberate, not stylistic: as of
  * AI SDK v4, `@ai-sdk/groq`/`@ai-sdk/openai`/`@ai-sdk/anthropic` are
- * ESM-only (`"type": "module"`, no CJS build), but this backend compiles to
- * CommonJS (`apps/api/tsconfig.json`'s `module: "commonjs"`). A static
- * `import`/`require` of any of them would crash with `ERR_REQUIRE_ESM` the
- * moment anything loads this file — before `resolveModel` is ever called.
- * Dynamic `import()` is Node's supported interop path for CJS code
- * consuming an ESM-only package, and TypeScript's commonjs emit preserves
- * it as a real dynamic import rather than downleveling it to `require()`.
+ * ESM-only (`"type": "module"`, no CJS build). This package itself compiles
+ * to CommonJS (see tsconfig.json), and both current consumers (`apps/api`'s
+ * NestJS backend and `apps/web`'s Next.js Route Handlers) run under Node's
+ * CommonJS module system too — a static `import`/`require` of any of these
+ * provider packages would crash with `ERR_REQUIRE_ESM` the moment anything
+ * loads this file, before `resolveModel` is ever called. Dynamic `import()`
+ * is Node's supported interop path for CJS code consuming an ESM-only
+ * package, and TypeScript's commonjs emit preserves it as a real dynamic
+ * import rather than downleveling it to `require()`.
  *
  * @param apiKeyOverride - A user-supplied (BYOK) key, already decrypted by
  *   the caller, to use in place of the app's shared env-var key for this one
