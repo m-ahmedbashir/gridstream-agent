@@ -24,15 +24,15 @@
 
 ## 📍 Where this project is right now
 
-This repo is mid-pivot. It started as **maintain-agent**, an industrial maintenance-report planner (extract a machine profile from a PDF, match best-practice measures, generate an ROI-backed plan). That domain has been **deliberately and completely removed** — not deprecated, not hidden behind a flag, actually deleted — to make room for a new domain: an event-driven pipeline that ingests live telemetry from green-energy hardware and produces AI-assisted fault diagnostics with a human approving anything consequential before it happens.
+`gridstream-agent` is early-stage: the foundation is built, the VPP domain itself is still being built on top of it.
 
-**What survived the cleanup, because every future feature needs it regardless of domain:**
+**What's live today:**
 - Clerk authentication on the frontend
 - A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
 - A provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`) — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
 
-**What doesn't exist yet:** the actual VPP domain. No `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, no ingestion pipeline, no diagnostic agent, no dashboard. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been done stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
+**What's still ahead:** the actual VPP domain. No `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, no ingestion pipeline, no diagnostic agent, no dashboard yet. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been built stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
 
 ---
 
@@ -96,7 +96,7 @@ The output schema (what the model must return) and any request/response DTOs liv
 ### Rules that don't bend
 
 - **One model registry, always.** `apps/api/src/common/ai/model-registry.ts` is the only place a provider SDK gets imported. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
-- **Structured output, not parsed prose.** `generateObject()`/`tool()` bound directly to a Zod schema. Never `generateText()` plus hand-rolled JSON extraction — that pattern existed in the old domain and was a real source of bugs; it does not come back.
+- **Structured output, not parsed prose.** `generateObject()`/`tool()` bound directly to a Zod schema. Never `generateText()` plus hand-rolled JSON extraction — that's a real source of bugs and has no place here.
 - **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model — the same discipline you'd put into a public API applies here.
 - **The model never computes a fact.** Financial estimates, severity thresholds, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript. The model writes prose around numbers it's handed, never numbers of its own.
 - **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first. Nothing downstream executes without an explicit human action.
@@ -136,7 +136,7 @@ gridstream-agent/
 ├── packages/
 │   └── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
 ├── AGENTS.md                    # rules for any coding agent working in this repo
-├── REFACTOR_PROGRESS.md         # stage-by-stage log of the maintain-agent → gridstream-agent pivot
+├── REFACTOR_PROGRESS.md         # stage-by-stage build log
 ├── turbo.json
 ├── LICENSE
 ├── CONTRIBUTING.md
@@ -224,7 +224,7 @@ Issues and PRs are genuinely welcome. Before opening one:
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) — it covers setup and the pre-PR checklist (`pnpm run typecheck` + `pnpm test`, the same commands CI runs).
 - This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 - Bug reports and feature requests have templates under `.github/ISSUE_TEMPLATE/`; PRs get a checklist template automatically.
-- Given the repo is mid-pivot, check [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) first — it tracks exactly what exists, what's intentionally gone, and what's still ahead.
+- Check [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) first — it tracks exactly what exists and what's still ahead.
 
 ## 🙏 Acknowledgments
 
