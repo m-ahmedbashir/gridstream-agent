@@ -4,11 +4,11 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 ## What this is
 
-`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`).
+`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`). Redis + BullMQ back the telemetry-ingestion queue.
 
 Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for what's built so far and what's next.
 
-What's already load-bearing: the provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`), Clerk-linked user settings incl. BYOK (`apps/api/src/modules/users/`), BYOK encryption (`apps/api/src/common/crypto/`).
+What's already load-bearing: the provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`), Clerk-linked user settings incl. BYOK (`apps/api/src/modules/users/`), BYOK encryption (`apps/api/src/common/crypto/`), telemetry ingestion (`apps/api/src/modules/telemetry-ingestion/` — simulator producer + BullMQ consumer, with an injectable `AiDiagnosticTriggerService` stub as the seam Stage 5's diagnostic agent plugs into).
 
 ## Architecture & SOLID principles
 
@@ -31,9 +31,15 @@ SOLID at the file level, as you write, not as a retrofit:
 ```
 apps/api/                  NestJS backend (deployed to Railway)
   src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts, tools/ (for an AI-calling feature — see "Building an AI feature")
+  src/modules/telemetry-ingestion/  no controller — a producer/consumer pair, not an HTTP feature.
+                                      telemetry-simulator.service.ts (producer, gated by TELEMETRY_SIMULATOR_ENABLED)
+                                      + telemetry-queue.consumer.ts (BullMQ @Processor) + pure logic split into
+                                      its own testable file per concern (telemetry-reading-generator.ts,
+                                      telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts (Stage 5 seam)
   src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared (no schema.ts here anymore)
   src/common/crypto/          BYOK AES-256-GCM encryption
   src/common/ai/              model-registry.ts — the only place a provider SDK is imported, ever
+  scripts/                    one-off scripts run via ts-node, outside the Nest DI graph (e.g. seed-devices.ts)
   drizzle.config.ts           drizzle-kit config — schema path points at packages/shared/src/db/schema.ts
   drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
 

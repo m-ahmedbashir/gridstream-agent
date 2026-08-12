@@ -11,7 +11,7 @@ stage must compile/typecheck clean before the next begins.
 | 1 | Codebase audit & mapping | ✅ Done |
 | 2 | Monorepo workspace & package renaming | ✅ Done |
 | 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ✅ Done (commit pending) |
-| 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ⬜ Not started |
+| 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ✅ Done (commit pending) |
 | 5 | Vercel AI SDK diagnostic agent (generateObject + tool calling) | ⬜ Not started |
 | 6 | Next.js VPP dashboard & HITL UI | ⬜ Not started |
 | 7 | Documentation, cleanup, final CI verification | ⬜ Not started |
@@ -654,3 +654,135 @@ by hand. Checked compatibility first: `drizzle-zod@0.8.3` requires `zod ^4.0.0`
   (ingestion) and Stage 6 (dashboard) are what actually query them.
 - This entire stage is **uncommitted** — review the working tree and commit
   (or request changes) when ready.
+
+---
+
+## 2026-08-12 — Stage 4: NestJS ingestion, Redis/BullMQ queue, telemetry simulator
+
+**Not committed** — same as Stage 3, working-tree changes only.
+
+### Version decision: bullmq 5.x, not the just-released 6.x
+
+`@nestjs/bullmq@11.0.5` accepts `bullmq ^3 || ^4 || ^5 || ^6`. Checked both
+before picking: `bullmq@6.1.0` is a genuinely new major — it turned `pg`,
+`redis`, and `ioredis` all into peer dependencies, adding Postgres itself as
+an alternative queue backend alongside Redis. `bullmq@5.81.3` is still the
+mature, Redis-only, ioredis-bundled architecture (confirmed via `npm view
+bullmq@5.81.3 dependencies` — `ioredis` is a direct dependency, not a peer).
+Pinned to 5.x: a brand-new multi-backend redesign is real complexity to
+misconfigure for infrastructure this environment can't live-test against
+(no Redis here either, same situation as Postgres). Added `ioredis@^5.11.1`
+as an explicit dependency too, matching the exact version bullmq 5.x bundles
+internally, so pnpm resolves both to the same instance rather than two.
+
+### What changed
+
+- **`apps/api/package.json`** — added `@nestjs/bullmq`, `bullmq`, `ioredis`.
+- **`apps/api/.env.example`** — `REDIS_URL`, `TELEMETRY_SIMULATOR_ENABLED`
+  (default `false`, confirmed via question before building), and
+  `TELEMETRY_SIMULATOR_INTERVAL_MS`.
+- **`apps/api/src/app.module.ts`** — `BullModule.forRootAsync` registers the
+  Redis connection once, globally, as a real `ioredis` instance (constructed
+  with `maxRetriesPerRequest: null`, which BullMQ's blocking connections
+  require or Worker construction throws).
+- **New module: `apps/api/src/modules/telemetry-ingestion/`** — no
+  controller, since this isn't an HTTP feature (a producer/consumer pair):
+  - `telemetry-reading-generator.ts` — pure function, generates a plausible
+    reading per device type (SOLAR gets `solarProductionKwh`, BATTERY gets
+    `batterySoC`/`batteryTempCelsius`, all types get `gridVoltage`), with a
+    10% chance per tick of pushing one metric into anomaly range — thermal
+    runaway (>65°C) for BATTERY devices, voltage sag (<200V) for everything
+    else. Takes an injectable `random` source so tests are deterministic.
+  - `telemetry-thresholds.ts` — pure `isAnomalous()`, the exact two bounds
+    from the master plan, boundary-exclusive (65.0°C itself doesn't count).
+  - `telemetry-simulator.service.ts` — the producer. Gated by
+    `TELEMETRY_SIMULATOR_ENABLED` (off by default, confirmed via question).
+    On each tick: picks a random `DeviceAsset`, generates a reading,
+    `queue.add()`s it. Logs and no-ops if `device_assets` is empty rather
+    than erroring.
+  - `telemetry-queue.consumer.ts` — the `@Processor('telemetry')` consumer.
+    Validates `job.data` against `telemetryLogInsertSchema` (from
+    `@gridstream/shared` — Stage 3's derived schema, reused directly as the
+    queue payload contract), inserts into `telemetry_logs`, calls
+    `AiDiagnosticTriggerService.trigger()` if `isAnomalous()`.
+  - `ai-diagnostic-trigger.service.ts` — the Stage 5 seam. One method,
+    currently just logs. Kept as its own injectable service specifically so
+    Stage 5 is a change to this one file, not a rewrite of the consumer.
+  - `telemetry-ingestion.constants.ts` — see the circular-import bug below
+    for why this exists as a separate file.
+  - `telemetry-ingestion.module.ts` — registers the queue, wires the three
+    providers.
+- **`packages/shared/src/db/schema.ts`** — `telemetryLogInsertSchema`'s
+  `timestamp` field overridden to `z.coerce.date()` instead of drizzle-zod's
+  default strict `z.date()`. Reasoning below.
+- **`apps/api/scripts/seed-devices.ts`** (new) + `db:seed` script (added
+  back to both `apps/api/package.json` and root `package.json` — it didn't
+  exist since the Prisma→Drizzle migration removed the old one). Seeds one
+  demo device per `deviceType`, idempotent via `onConflictDoNothing()` on
+  `serial_number`. Standalone script outside Nest's DI graph, same pattern
+  the old Prisma-era `prisma/seed.ts` used.
+- **`AGENTS.md`** — "What this is" now mentions Redis/BullMQ and the new
+  module; Structure section documents the producer/consumer split and why
+  there's no controller.
+
+### Two real bugs caught by actually running things, not by typecheck
+
+**1. BullMQ JSON-serializes job data through Redis — a `Date` doesn't survive.**
+The producer enqueues `reading.timestamp` as a real `Date`; by the time the
+consumer reads `job.data.timestamp`, it's a plain ISO string (Redis only
+stores strings, so BullMQ always JSON-round-trips job payloads). Drizzle-zod's
+default-derived schema uses a strict `z.date()`, which rejects a string
+outright. Fixed by overriding just that one field to `z.coerce.date()` in
+the schema derivation itself — accepts a real `Date` *or* a string
+identically, so it works for both the queue consumer and any future direct
+in-process insert. Regression-tested: `telemetry-queue.consumer.spec.ts`
+explicitly passes a string timestamp through `process()` and asserts the
+inserted value is a real `Date` instance.
+
+**2. Circular import silently broke DI resolution at boot — not at typecheck, not in unit tests.**
+`telemetry-ingestion.module.ts` originally both exported `TELEMETRY_QUEUE`
+*and* imported the services that needed it; those services imported the
+constant back from the module file. That cycle means `TELEMETRY_QUEUE` is
+still `undefined` at the moment the `@InjectQueue()` decorator runs on
+`TelemetrySimulatorService` (decorators execute at class-definition time,
+before the cycle finishes resolving). Result: NestJS silently registered the
+injection under a fallback `"BullQueue_default"` token instead of
+`"BullQueue_telemetry"`, and the real app crashed at boot with
+`UnknownDependenciesException` — while `tsc --noEmit` stayed clean and every
+unit test passed, because the unit tests mock the queue object directly and
+never exercise Nest's actual DI container. **Only caught by booting the real
+compiled app** (same discipline as Stage 3's `DbService` bug) — moved
+`TELEMETRY_QUEUE` into its own dependency-free `telemetry-ingestion.constants.ts`
+so nothing importing it can be part of a cycle.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 pass. `pnpm test` — 7 suites, 46 tests pass (21 new:
+  6 reading-generator, 7 thresholds, 3 consumer, 5 simulator).
+- `pnpm build` — both apps succeed.
+- Compiled backend boot, twice: once with `REDIS_URL` pointed at a closed
+  port and the simulator disabled — reaches the same correct Postgres
+  `ECONNREFUSED` as every prior smoke test (confirms `ioredis`'s lazy-connect
+  behavior doesn't block or crash boot when Redis is unreachable, unlike a
+  synchronous-connect client would); once with the simulator enabled too —
+  same clean result, `TelemetryIngestionModule dependencies initialized`
+  with no DI error (this is what caught bug #2 above, before the fix).
+- The simulator's `onModuleInit` itself doesn't fire in either boot test —
+  expected, not a gap: `main.ts`'s DB health check runs (and fails, no live
+  Postgres here) *before* `app.listen()`, and `onModuleInit` hooks fire on
+  `listen()`/`init()`, not on `NestFactory.create()` (this is the exact
+  mechanism Stage 3's `DbService` bug turned on). The simulator's actual
+  tick/enable-gating/queue-call behavior is covered by
+  `telemetry-simulator.service.spec.ts` instead, which calls `onModuleInit()`
+  directly against a mocked queue+DbService.
+
+### Still pending
+
+- Applying the migration and running `pnpm db:seed` against a real database
+  — no `DATABASE_URL`/`REDIS_URL` here.
+- Actually seeing a job flow through a live Redis end-to-end — can't verify
+  further than "DI resolves correctly and the consumer's logic is correct
+  in isolation" without one.
+- Stage 5 (the real diagnostic agent) replaces `AiDiagnosticTriggerService`'s
+  body — everything else in this stage stays as-is.
+- This entire stage is **uncommitted**, same as Stage 3.

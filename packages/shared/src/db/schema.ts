@@ -109,7 +109,18 @@ export type DeviceAsset = z.infer<typeof deviceAssetSelectSchema>;
 export type NewDeviceAsset = z.infer<typeof deviceAssetInsertSchema>;
 
 export const telemetryLogSelectSchema = createSelectSchema(telemetryLogs);
-export const telemetryLogInsertSchema = createInsertSchema(telemetryLogs);
+/**
+ * `timestamp` is coerced (`z.coerce.date()`), not the strict `z.date()`
+ * drizzle-zod would derive by default — this schema validates BullMQ job
+ * payloads (Stage 4's ingestion queue), and BullMQ JSON-serializes job data
+ * through Redis, so a `Date` enqueued by the producer arrives at the
+ * consumer as a plain ISO string. `z.coerce.date()` accepts both a real
+ * `Date` and a string equally, so this works whether the caller is the
+ * queue consumer or a direct in-process insert.
+ */
+export const telemetryLogInsertSchema = createInsertSchema(telemetryLogs, {
+  timestamp: z.coerce.date(),
+});
 export type TelemetryLog = z.infer<typeof telemetryLogSelectSchema>;
 export type NewTelemetryLog = z.infer<typeof telemetryLogInsertSchema>;
 

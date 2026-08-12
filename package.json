@@ -12,7 +12,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @gridstream/api db:generate",
-    "db:migrate": "pnpm --filter @gridstream/api db:migrate"
+    "db:migrate": "pnpm --filter @gridstream/api db:migrate",
+    "db:seed": "pnpm --filter @gridstream/api db:seed"
   },
   "keywords": [],
   "author": "Ahmed Bashir",
