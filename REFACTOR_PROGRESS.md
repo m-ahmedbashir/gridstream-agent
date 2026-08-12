@@ -963,3 +963,86 @@ Corrected with explicit annotations naming the real generic parameters:
   `PENDING_APPROVAL` `FaultDiagnostic` — right now these rows are created but
   nothing surfaces or approves/rejects them.
 - This entire stage is **uncommitted**, same as Stage 3/4.
+
+---
+
+## 2026-08-12 — Stage 5 refinement: native `Output.object()` replaces the schema-only "submit" tool
+
+Prompted by a direct question about whether an official AI SDK pattern existed
+for this exact shape ("investigate with tools, then emit one structured
+verdict") rather than relying on the hand-rolled version built above. Checked
+the actual installed `ai` package's type declarations directly
+(`apps/api/node_modules/ai/dist/index.d.ts`), not just the doc site — the
+doc-site fetch's own paraphrase disagreed with itself on a helper name
+(`isStepCount` vs. `stepCountIs`), which the type declarations resolved:
+`stepCountIs` is a real named export, just an alias of `isStepCount` (`export
+{ ... isStepCount as stepCountIs ... }`) — both work, no discrepancy.
+
+The real finding: `generateText()` accepts an `output` option (`Output.object({
+schema })`, confirmed against `declare const object: <OBJECT>({ schema, name?,
+description? }) => Output<OBJECT, ...>` in the type declarations) that binds
+the model's **final** response — after it's done calling `tools` — to a Zod
+schema, surfaced as `result.output` (throws `NoOutputGeneratedError` if the
+model never converges within `stopWhen`'s step limit). This is the SDK's own
+native mechanism for exactly the shape `diagnose()` needed, and is strictly
+less code than the schema-only `submitDiagnosis` tool trick built earlier in
+this same stage (a tool with no `execute`, whose call had to be manually
+located in `result.toolCalls` and re-parsed).
+
+### What changed
+
+- **`diagnostics.service.ts`** — removed the `submitDiagnosisTool` construction
+  entirely; `tools` now only contains the two real investigative tools
+  (`getHistoricalBaseline`, `getHardwareManual`). Added `output:
+  Output.object({ schema: diagnosisProposalSchema })` to the `generateText()`
+  call. Replaced the `result.toolCalls.find(...)` extraction with a `try {
+  rawOutput = result.output } catch` that catches `NoOutputGeneratedError`
+  specifically and rethrows the same clear step-limit error message as
+  before (naming `finishReason`) — any other error still propagates
+  unchanged. The system prompt's "then call submitDiagnosis exactly once"
+  instruction was simplified to "then provide your diagnosis," since the
+  model no longer needs to know about a specific tool name to finish — it
+  just stops calling tools and answers, and the SDK enforces the schema on
+  that answer. The defensive `diagnosisProposalSchema.parse(...)` re-check
+  stayed, now applied to `rawOutput` instead of a tool call's `input`.
+- **`diagnostics.service.spec.ts`** — mock `ai` module gained `Output: {
+  object: (config) => config }` (inert passthrough, same treatment as `tool`)
+  and a `MockNoOutputGeneratedError` class (declared before `jest.mock()`,
+  same initialization-order reason as `mockGenerateText`). The "step limit
+  exceeded" test now mocks `generateText`'s resolved value with a getter
+  (`get output() { throw new MockNoOutputGeneratedError(...) }`) instead of
+  an empty `toolCalls` array, mirroring how the real SDK object's `output`
+  property actually behaves (a throwing accessor, not a plain field). Same 4
+  test cases, same coverage, updated to the new shape.
+- **`tools/get-historical-baseline.tool.ts`** and
+  **`tools/get-hardware-manual.tool.ts`** — unchanged. Their own `tool()`
+  calls are real investigative tools with a real `execute`, not the pattern
+  being replaced.
+- **`AGENTS.md`** — "Building an AI feature" section's third bullet under
+  "Rules that don't bend" (the schema-only final-answer-tool guidance)
+  replaced with a rule pointing at `output: Output.object({ schema })` +
+  `result.output` as the native mechanism for a tool-calling loop ending in
+  structured output, citing this file as the reference. The
+  `<feature>.service.spec.ts` line in the folder-shape block updated to
+  mention mocking `Output.object` alongside `tool()`/`stepCountIs`.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 pass.
+- `pnpm test` — 11 suites, 58 tests pass (same count as before this
+  refinement — no tests added or removed, four rewritten to match the new
+  mock shape).
+- `pnpm build` — all 3 packages succeed.
+- Compiled backend boot — reaches `DiagnosticsModule dependencies
+  initialized` with no DI error, then the same correct `ECONNREFUSED`, same
+  as every prior boot smoke test in this file.
+- Standalone runtime script (same discipline as the ESM verification above)
+  — confirmed `Output.object()` and `NoOutputGeneratedError` both resolve as
+  real values via `await import('ai')` under the real compiled-CommonJS
+  runtime, not just Jest's manual mock.
+
+### Still pending
+
+- Same as the entry above — no live model/database/Redis in this
+  environment, Stage 6 still owns surfacing `PENDING_APPROVAL` rows to a
+  human, and this stage remains **uncommitted**.

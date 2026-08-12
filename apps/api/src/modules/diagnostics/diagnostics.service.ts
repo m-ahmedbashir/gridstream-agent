@@ -57,19 +57,7 @@ export class DiagnosticsService {
     // tool factories below: `ai` v7 is ESM-only, apps/api compiles to
     // CommonJS. Node caches a dynamic import after its first resolution, so
     // this isn't a meaningful per-call cost.
-    const { generateText, stepCountIs, tool } = await import('ai');
-
-    // A tool with no `execute` is the AI SDK's mechanism for a model to
-    // return structured final output from inside a tool-calling loop: the
-    // call's `input` is still validated against `inputSchema` and shows up
-    // in `result.toolCalls`, but with no result to append, the SDK can't
-    // continue the loop past this step — which is exactly the "stop once
-    // you've submitted" behavior this needs, on top of the stepCountIs(3)
-    // ceiling that guards against the model never calling it at all.
-    const submitDiagnosisTool = tool({
-      description: 'Submit the final structured fault diagnosis. Call this exactly once, after investigating with the other tools.',
-      inputSchema: diagnosisProposalSchema,
-    });
+    const { generateText, stepCountIs, Output, NoOutputGeneratedError } = await import('ai');
 
     const result = await generateText({
       // resolveModel() is async — see its own doc comment in model-registry.ts:
@@ -78,7 +66,7 @@ export class DiagnosticsService {
       model: await resolveModel(DEFAULT_MODEL_KEY),
       instructions: `You are a Virtual Power Plant fault-diagnostic agent for green-energy hardware (solar, battery storage, heat pumps, EV wallboxes).
 
-A device has breached a safety bound. Investigate using the available tools — check the device's own 24-hour baseline to see how far this reading deviates from its normal behavior, and look up manufacturer guidance for the symptom — then call submitDiagnosis exactly once with your conclusion.
+A device has breached a safety bound. Investigate using the available tools — check the device's own 24-hour baseline to see how far this reading deviates from its normal behavior, and look up manufacturer guidance for the symptom — then provide your diagnosis.
 
 Rules you must follow:
 - Never invent a financial figure, cost, or exact percentage — describe severity and urgency in words, the schema's enums carry the structured judgment.
@@ -100,23 +88,39 @@ ${JSON.stringify(
       tools: {
         getHistoricalBaseline: await createGetHistoricalBaselineTool(this.dbService, device.id),
         getHardwareManual: await createGetHardwareManualTool(device.deviceType),
-        submitDiagnosis: submitDiagnosisTool,
       },
+      // Output.object() is the AI SDK's native mechanism for a tool-calling
+      // loop that ends in one structured answer: the model investigates
+      // freely via `tools`, and once it stops calling them, the SDK binds
+      // its final response to this schema instead of plain text. Replaces
+      // an earlier hand-rolled version of this (a schema-only "submit" tool
+      // with no `execute`, manually located in `result.toolCalls`) now that
+      // this native path is confirmed to exist in the installed AI SDK
+      // version — strictly less code for the same guarantee.
+      output: Output.object({ schema: diagnosisProposalSchema }),
       stopWhen: stepCountIs(DIAGNOSTIC_STEP_LIMIT),
     });
 
-    const submission = result.toolCalls.find((call) => call.toolName === 'submitDiagnosis');
-    if (!submission) {
-      throw new Error(
-        `Diagnostic agent for device ${deviceId} did not submit a diagnosis within ${DIAGNOSTIC_STEP_LIMIT} steps (finishReason: ${result.finishReason}).`,
-      );
+    // Accessing `result.output` is what throws NoOutputGeneratedError if the
+    // model never converged on a final answer within the step limit (e.g.
+    // it kept calling tools until stopWhen cut it off) — not a separate
+    // check of our own.
+    let rawOutput: unknown;
+    try {
+      rawOutput = result.output;
+    } catch (err) {
+      if (err instanceof NoOutputGeneratedError) {
+        throw new Error(
+          `Diagnostic agent for device ${deviceId} did not produce a diagnosis within ${DIAGNOSTIC_STEP_LIMIT} steps (finishReason: ${result.finishReason}).`,
+        );
+      }
+      throw err;
     }
 
-    // submission.input is already validated against diagnosisProposalSchema
-    // by the AI SDK itself (that's what inputSchema is for) — re-parsing
-    // here is a cheap belt-and-suspenders check, not redundant validation
-    // logic of our own.
-    const proposal = diagnosisProposalSchema.parse(submission.input);
+    // The AI SDK already validates its structured output against the schema
+    // bound via Output.object() — re-parsing here is a cheap
+    // belt-and-suspenders check, not redundant validation logic of our own.
+    const proposal = diagnosisProposalSchema.parse(rawOutput);
 
     const [inserted] = await this.dbService.db
       .insert(faultDiagnostics)

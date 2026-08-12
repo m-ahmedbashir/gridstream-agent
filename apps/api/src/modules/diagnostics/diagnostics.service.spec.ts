@@ -5,22 +5,26 @@ import { DbService } from '../../common/db/db.service';
 // — `jest.requireActual('ai')` would try to actually load the real package,
 // which can't be `require()`'d at all under Jest's CJS test environment (the
 // same ESM-only-package problem documented on diagnostics.service.ts's own
-// dynamic `import('ai')`). `tool` and `stepCountIs` are given inert
-// pass-through implementations: nothing in these tests inspects their
-// output, since the thing that would normally call them (a real
+// dynamic `import('ai')`). `tool`, `stepCountIs`, and `Output.object` are
+// given inert pass-through implementations: nothing in these tests inspects
+// their output, since the thing that would normally call them (a real
 // generateText()) is mocked out entirely too.
 //
-// `mockGenerateText` is declared *before* `jest.mock()` and referenced by
-// the factory, rather than assigned from inside it — the factory only runs
-// lazily, the first time something actually loads 'ai' (here, that's deep
-// inside a test's `diagnose()` call, well after `beforeEach` already needs
-// a live reference to reset), so relying on the factory's own execution to
-// produce this value would leave it `undefined` when `beforeEach` runs.
+// `mockGenerateText` and `MockNoOutputGeneratedError` are declared *before*
+// `jest.mock()` and referenced by the factory, rather than assigned from
+// inside it — the factory only runs lazily, the first time something
+// actually loads 'ai' (here, that's deep inside a test's `diagnose()` call,
+// well after `beforeEach` already needs a live reference to reset), so
+// relying on the factory's own execution to produce these would leave them
+// `undefined` when `beforeEach` runs.
 const mockGenerateText = jest.fn();
+class MockNoOutputGeneratedError extends Error {}
 jest.mock('ai', () => ({
     generateText: mockGenerateText,
     tool: (config: unknown) => config,
     stepCountIs: (n: number) => n,
+    Output: { object: (config: unknown) => config },
+    NoOutputGeneratedError: MockNoOutputGeneratedError,
 }));
 
 // resolveModel() itself dynamically imports a real @ai-sdk/* provider
@@ -62,7 +66,7 @@ describe('DiagnosticsService', () => {
         mockGenerateText.mockReset();
     });
 
-    it("persists a FaultDiagnostic from the model's submitDiagnosis tool call, forcing status to PENDING_APPROVAL", async () => {
+    it("persists a FaultDiagnostic from the model's structured output, forcing status to PENDING_APPROVAL", async () => {
         const proposal = {
             severity: 'HIGH',
             faultType: 'Battery thermal runaway',
@@ -70,10 +74,7 @@ describe('DiagnosticsService', () => {
             recommendedAction: 'Dispatch a technician to inspect cooling.',
             requiresImmediateDispatch: true,
         };
-        mockGenerateText.mockResolvedValue({
-            toolCalls: [{ toolName: 'submitDiagnosis', input: proposal }],
-            finishReason: 'tool-calls',
-        });
+        mockGenerateText.mockResolvedValue({ output: proposal, finishReason: 'stop' });
 
         const insertedRow = {
             id: 'fault-1',
@@ -101,18 +102,23 @@ describe('DiagnosticsService', () => {
         expect(mockGenerateText).not.toHaveBeenCalled();
     });
 
-    it('throws a clear error if the model never calls submitDiagnosis within the step limit', async () => {
-        mockGenerateText.mockResolvedValue({ toolCalls: [], finishReason: 'stop' });
+    it('throws a clear error if the model never produces a diagnosis within the step limit', async () => {
+        mockGenerateText.mockResolvedValue({
+            get output() {
+                throw new MockNoOutputGeneratedError('no output generated');
+            },
+            finishReason: 'stop',
+        });
         const { dbService } = makeDbMock(DEVICE, {});
         const service = new DiagnosticsService(dbService);
 
-        await expect(service.diagnose('device-1', READING)).rejects.toThrow(/did not submit a diagnosis/);
+        await expect(service.diagnose('device-1', READING)).rejects.toThrow(/did not produce a diagnosis/);
     });
 
-    it('rejects a submitDiagnosis call whose input fails schema validation', async () => {
+    it('rejects a structured output that fails schema validation', async () => {
         mockGenerateText.mockResolvedValue({
-            toolCalls: [{ toolName: 'submitDiagnosis', input: { severity: 'NOT_A_REAL_SEVERITY' } }],
-            finishReason: 'tool-calls',
+            output: { severity: 'NOT_A_REAL_SEVERITY' },
+            finishReason: 'stop',
         });
         const { dbService } = makeDbMock(DEVICE, {});
         const service = new DiagnosticsService(dbService);
