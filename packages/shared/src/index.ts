@@ -16,3 +16,5 @@ export interface ApiResponse<T = unknown> {
 // ─── Re-export everything below as you add modules ────────────────────────────
 
 export * from './db/schema';
+export * from './schemas/diagnostics.schema';
+export * from './schemas/devices.schema';

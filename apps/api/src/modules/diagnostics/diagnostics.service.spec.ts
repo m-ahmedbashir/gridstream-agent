@@ -82,6 +82,8 @@ describe('DiagnosticsService', () => {
             ...proposal,
             status: 'PENDING_APPROVAL',
             createdAt: new Date(),
+            approvedAt: null,
+            approvedBy: null,
         };
         const { dbService, valuesMock } = makeDbMock(DEVICE, insertedRow);
         const service = new DiagnosticsService(dbService);
@@ -140,7 +142,7 @@ describe('DiagnosticsService', () => {
         };
         mockGenerateText.mockResolvedValue({ output: proposal, finishReason: 'stop' });
 
-        const { dbService, valuesMock } = makeDbMock(DEVICE, { id: 'fault-1', deviceId: 'device-1', ...proposal, status: 'PENDING_APPROVAL', createdAt: new Date() });
+        const { dbService, valuesMock } = makeDbMock(DEVICE, { id: 'fault-1', deviceId: 'device-1', ...proposal, status: 'PENDING_APPROVAL', createdAt: new Date(), approvedAt: null, approvedBy: null });
         const service = new DiagnosticsService(dbService);
 
         await service.diagnose('device-1', READING);
@@ -152,5 +154,108 @@ describe('DiagnosticsService', () => {
                 recommendedAction: 'Dispatch a technician to inspect cooling.',
             }),
         );
+    });
+});
+
+const FAULT_ROW = {
+    id: 'fault-1',
+    deviceId: 'device-1',
+    severity: 'HIGH',
+    faultType: 'Battery thermal runaway',
+    summary: 'Battery temperature exceeded safe range.',
+    recommendedAction: 'Dispatch a technician to inspect cooling.',
+    requiresImmediateDispatch: true,
+    status: 'PENDING_APPROVAL',
+    createdAt: new Date(),
+    approvedAt: null,
+    approvedBy: null,
+};
+
+describe('DiagnosticsService.listDiagnostics()', () => {
+    it('returns each diagnostic with its device joined, plus a total count', async () => {
+        const findManyMock = jest.fn().mockResolvedValue([{ ...FAULT_ROW, device: DEVICE_WITH_TIMESTAMPS() }]);
+        const whereMock = jest.fn().mockResolvedValue([{ total: '1' }]);
+        const fromMock = jest.fn().mockReturnValue({ where: whereMock });
+        const selectMock = jest.fn().mockReturnValue({ from: fromMock });
+        const dbService = {
+            db: { query: { faultDiagnostics: { findMany: findManyMock } }, select: selectMock },
+        } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        const result = await service.listDiagnostics({ status: 'PENDING_APPROVAL', limit: 50, offset: 0 });
+
+        expect(findManyMock).toHaveBeenCalledWith(
+            expect.objectContaining({ with: { device: true }, limit: 50, offset: 0 }),
+        );
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].device.serialNumber).toBe('X-1');
+        expect(result.total).toBe(1); // coerced from Postgres's string count, same as get-historical-baseline.tool.ts
+    });
+});
+
+function makeUpdateMock(updatedRow: Record<string, unknown> | undefined) {
+    const returningMock = jest.fn().mockResolvedValue(updatedRow ? [updatedRow] : []);
+    const whereMock = jest.fn().mockReturnValue({ returning: returningMock });
+    const setMock = jest.fn().mockReturnValue({ where: whereMock });
+    const updateMock = jest.fn().mockReturnValue({ set: setMock });
+    return { updateMock, setMock };
+}
+
+function makeSelectExistingMock(existingRow: Record<string, unknown> | undefined) {
+    const whereMock = jest.fn().mockResolvedValue(existingRow ? [existingRow] : []);
+    const fromMock = jest.fn().mockReturnValue({ where: whereMock });
+    return jest.fn().mockReturnValue({ from: fromMock });
+}
+
+function DEVICE_WITH_TIMESTAMPS() {
+    return { id: 'device-1', deviceType: 'BATTERY', serialNumber: 'X-1', location: 'Basement', status: 'ONLINE', createdAt: new Date(), updatedAt: new Date() };
+}
+
+describe('DiagnosticsService.approve() / reject()', () => {
+    it('approve() is an atomic conditional update — only succeeds against a PENDING_APPROVAL row', async () => {
+        const updatedRow = { ...FAULT_ROW, status: 'APPROVED', approvedAt: new Date(), approvedBy: 'user_1' };
+        const { updateMock, setMock } = makeUpdateMock(updatedRow);
+        const dbService = { db: { update: updateMock } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        const result = await service.approve('fault-1', 'user_1');
+
+        expect(setMock).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'APPROVED', approvedBy: 'user_1' }),
+        );
+        expect(result.status).toBe('APPROVED');
+        expect(result.approvedBy).toBe('user_1');
+    });
+
+    it('reject() sets the same approvedAt/approvedBy pair — it records who decided, not just who approved', async () => {
+        const updatedRow = { ...FAULT_ROW, status: 'REJECTED', approvedAt: new Date(), approvedBy: 'user_2' };
+        const { updateMock, setMock } = makeUpdateMock(updatedRow);
+        const dbService = { db: { update: updateMock } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        const result = await service.reject('fault-1', 'user_2');
+
+        expect(setMock).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 'REJECTED', approvedBy: 'user_2' }),
+        );
+        expect(result.status).toBe('REJECTED');
+    });
+
+    it('throws NotFoundException when the diagnostic does not exist at all', async () => {
+        const { updateMock } = makeUpdateMock(undefined);
+        const selectMock = makeSelectExistingMock(undefined);
+        const dbService = { db: { update: updateMock, select: selectMock } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        await expect(service.approve('missing', 'user_1')).rejects.toThrow('not found');
+    });
+
+    it('throws ConflictException (not a silent overwrite) when the diagnostic was already decided', async () => {
+        const { updateMock } = makeUpdateMock(undefined);
+        const selectMock = makeSelectExistingMock({ ...FAULT_ROW, status: 'REJECTED' });
+        const dbService = { db: { update: updateMock, select: selectMock } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        await expect(service.approve('fault-1', 'user_1')).rejects.toThrow('already REJECTED');
     });
 });

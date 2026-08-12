@@ -22,7 +22,9 @@ CREATE TABLE "fault_diagnostics" (
 	"recommended_action" text NOT NULL,
 	"requires_immediate_dispatch" boolean DEFAULT false NOT NULL,
 	"status" "fault_status" DEFAULT 'PENDING_APPROVAL' NOT NULL,
-	"created_at" timestamp DEFAULT now() NOT NULL
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"approved_at" timestamp,
+	"approved_by" text
 );
 --> statement-breakpoint
 CREATE TABLE "telemetry_logs" (

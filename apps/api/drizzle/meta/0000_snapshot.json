@@ -1,5 +1,5 @@
 {
-  "id": "1ee3ad81-abb3-498b-bd0e-9d670a3db387",
+  "id": "b7a080f9-160d-4c96-a01f-b5f4b8151517",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -134,6 +134,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},

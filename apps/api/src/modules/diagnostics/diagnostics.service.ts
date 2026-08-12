@@ -1,11 +1,13 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { and, count, desc, eq } from 'drizzle-orm';
 import {
   deviceAssets,
   faultDiagnostics,
   faultDiagnosticInsertSchema,
   faultDiagnosticSelectSchema,
+  faultDiagnosticWithDeviceSchema,
   type FaultDiagnostic,
+  type FaultDiagnosticWithDevice,
   type TelemetryLog,
 } from '@gridstream/shared';
 import { DbService } from '../../common/db/db.service';
@@ -157,5 +159,72 @@ ${JSON.stringify(
     this.logger.log(`FaultDiagnostic ${inserted.id} created for device ${deviceId} (severity: ${proposal.severity})`);
 
     return faultDiagnosticSelectSchema.parse(inserted);
+  }
+
+  /**
+   * The Stage 6 HITL surface: list FaultDiagnostics (optionally filtered by
+   * status) with their DeviceAsset joined, newest first. Uses Drizzle's
+   * relational query API (`db.query.*`) — wired since Stage 3's
+   * `faultDiagnosticsRelations`, but this is its first real caller; every
+   * other query in this codebase uses the fluent `.select().from()` builder
+   * instead.
+   */
+  async listDiagnostics(params: {
+    status?: FaultDiagnostic['status'];
+    limit: number;
+    offset: number;
+  }): Promise<{ items: FaultDiagnosticWithDevice[]; total: number }> {
+    const { status, limit, offset } = params;
+    const whereClause = status ? eq(faultDiagnostics.status, status) : undefined;
+
+    const [items, [totalRow]] = await Promise.all([
+      this.dbService.db.query.faultDiagnostics.findMany({
+        where: whereClause,
+        with: { device: true },
+        orderBy: desc(faultDiagnostics.createdAt),
+        limit,
+        offset,
+      }),
+      this.dbService.db.select({ total: count() }).from(faultDiagnostics).where(whereClause),
+    ]);
+
+    return {
+      items: items.map((item) => faultDiagnosticWithDeviceSchema.parse(item)),
+      total: Number(totalRow?.total ?? 0),
+    };
+  }
+
+  async approve(id: string, actorClerkId: string): Promise<FaultDiagnostic> {
+    return this.decide(id, 'APPROVED', actorClerkId);
+  }
+
+  async reject(id: string, actorClerkId: string): Promise<FaultDiagnostic> {
+    return this.decide(id, 'REJECTED', actorClerkId);
+  }
+
+  /**
+   * Shared approve/reject implementation: an atomic conditional update, not
+   * a read-then-write — `WHERE status = 'PENDING_APPROVAL'` means two
+   * operators racing to decide the same diagnostic can't both succeed. If
+   * nothing matched, one cheap follow-up read distinguishes "doesn't exist"
+   * (404) from "someone already decided this" (409) instead of a generic
+   * error either way.
+   */
+  private async decide(id: string, status: 'APPROVED' | 'REJECTED', actorClerkId: string): Promise<FaultDiagnostic> {
+    const [updated] = await this.dbService.db
+      .update(faultDiagnostics)
+      .set({ status, approvedAt: new Date(), approvedBy: actorClerkId })
+      .where(and(eq(faultDiagnostics.id, id), eq(faultDiagnostics.status, 'PENDING_APPROVAL')))
+      .returning();
+
+    if (updated) {
+      return faultDiagnosticSelectSchema.parse(updated);
+    }
+
+    const [existing] = await this.dbService.db.select().from(faultDiagnostics).where(eq(faultDiagnostics.id, id));
+    if (!existing) {
+      throw new NotFoundException(`FaultDiagnostic ${id} not found`);
+    }
+    throw new ConflictException(`FaultDiagnostic ${id} is already ${existing.status}`);
   }
 }

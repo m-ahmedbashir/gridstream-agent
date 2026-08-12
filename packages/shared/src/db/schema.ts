@@ -99,6 +99,11 @@ export const faultDiagnostics = pgTable('fault_diagnostics', {
   requiresImmediateDispatch: boolean('requires_immediate_dispatch').notNull().default(false),
   status: faultStatusEnum('status').notNull().default('PENDING_APPROVAL'),
   createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
+  // Set together, by the Stage 6 approve/reject flow only — never by the
+  // diagnostic agent itself. Represents "who/when a human last decided
+  // this," not approval specifically: a rejection sets both fields too.
+  approvedAt: timestamp('approved_at', { mode: 'date' }),
+  approvedBy: text('approved_by'), // the deciding user's Clerk userId
 });
 
 export const faultDiagnosticsRelations = relations(faultDiagnostics, ({ one }) => ({
