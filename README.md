@@ -75,8 +75,9 @@ No `DeviceAsset`/`TelemetryLog`/ingestion queue exists in this diagram on purpos
 - A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
 - A provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`) — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
+- `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, a Redis/BullMQ ingestion pipeline with a telemetry simulator (off by default), and the diagnostic agent (`apps/api/src/modules/diagnostics/`) that turns a safety-bound breach into a Zod-validated `FaultDiagnostic` sitting at `PENDING_APPROVAL`
 
-**What's still ahead:** the actual VPP domain. No `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, no ingestion pipeline, no diagnostic agent, no dashboard yet. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been built stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
+**What's still ahead:** the VPP dashboard — nothing yet reads `FaultDiagnostic` rows or lets an operator approve/reject one; `PENDING_APPROVAL` diagnostics currently just sit in the database. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been built stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
 
 ---
 
@@ -135,26 +136,32 @@ Most features in this codebase are, and should stay, a **single augmented call**
 
 ### The folder shape for a new AI-calling module
 
+Reference implementation: `apps/api/src/modules/diagnostics/` — the agent behind the diagram above.
+
 ```
 apps/api/src/modules/<feature>/
   <feature>.module.ts
-  <feature>.controller.ts        # HTTP surface only — validates, delegates, shapes the response
-  <feature>.service.ts           # orchestration: builds the prompt, calls generateObject()/tool(), returns the result
-  <feature>.service.spec.ts
+  <feature>.controller.ts        # HTTP surface, if it has one — diagnostics/ doesn't: it's triggered
+                                  # internally via DI (telemetry-ingestion calls it), not by a request
+  <feature>.service.ts           # orchestration: builds the prompt, calls generateObject() or
+                                  # generateText()+tools, returns the validated result
+  <feature>.service.spec.ts      # mock the AI SDK call itself (jest.mock('ai')), not just its inputs
   tools/
     <tool-name>.tool.ts          # one file per tool: a pure function + its own Zod input schema
     <tool-name>.tool.spec.ts     # pure functions — test them without ever touching the LLM
 ```
 
-The output schema (what the model must return) and any request/response DTOs live in `packages/shared`, not inline in the service — one definition, imported by the backend to bind `generateObject` *and* by the frontend to type whatever renders the result. See [AGENTS.md](AGENTS.md#type-safety--single-source-of-truth-for-schemas) for the full single-source-of-truth rule.
+The output schema (what the model must return) and any request/response DTOs live in `packages/shared`, not inline in the service — one definition, imported by the backend to bind the AI call *and* by the frontend to type whatever renders the result. Where the shape is a subset of an existing table (a diagnosis proposal is most of `FaultDiagnostic`, minus the fields the service fills in itself), derive it with `.pick()` off the table's schema instead of writing a parallel one. See [AGENTS.md](AGENTS.md#type-safety--single-source-of-truth-for-schemas) for the full single-source-of-truth rule.
 
 ### Rules that don't bend
 
 - **One model registry, always.** `apps/api/src/common/ai/model-registry.ts` is the only place a provider SDK gets imported. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
-- **Structured output, not parsed prose.** `generateObject()`/`tool()` bound directly to a Zod schema. Never `generateText()` plus hand-rolled JSON extraction — that's a real source of bugs and has no place here.
-- **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model — the same discipline you'd put into a public API applies here.
+- **No tools needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema.
+- **Tools needed → `generateText()` with `tools`, not `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. When the agent has to investigate before answering, that's `generateText()` with `tools` and a bounded `stopWhen`.
+- **A tool-calling loop that must end in a structured decision → a schema-only "final answer" tool, no `execute`.** The model calls it once; the AI SDK validates the call's input against `inputSchema` for you (no manual JSON parsing, no malformed-response repair logic — that class of bug doesn't exist here), and having no result to continue on is what makes the loop stop there. See `diagnostics.service.ts`'s `submitDiagnosis` tool.
+- **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model. If the caller already knows a value for certain (which device this is), close over it when building the tool instead of asking the model to supply it.
 - **The model never computes a fact.** Financial estimates, severity thresholds, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript. The model writes prose around numbers it's handed, never numbers of its own.
-- **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first. Nothing downstream executes without an explicit human action.
+- **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first, with that status set deterministically by the service — never taken from the model's own output. Nothing downstream executes without an explicit human action.
 
 ---
 

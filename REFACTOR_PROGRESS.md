@@ -12,7 +12,7 @@ stage must compile/typecheck clean before the next begins.
 | 2 | Monorepo workspace & package renaming | ✅ Done |
 | 3 | Database & domain schema refactor (DeviceAsset/TelemetryLog/FaultDiagnostic) | ✅ Done (commit pending) |
 | 4 | NestJS ingestion, Redis/BullMQ queue, telemetry simulator | ✅ Done (commit pending) |
-| 5 | Vercel AI SDK diagnostic agent (generateObject + tool calling) | ⬜ Not started |
+| 5 | Vercel AI SDK diagnostic agent (generateText + tool calling) | ✅ Done (commit pending) |
 | 6 | Next.js VPP dashboard & HITL UI | ⬜ Not started |
 | 7 | Documentation, cleanup, final CI verification | ⬜ Not started |
 
@@ -786,3 +786,180 @@ so nothing importing it can be part of a cycle.
 - Stage 5 (the real diagnostic agent) replaces `AiDiagnosticTriggerService`'s
   body — everything else in this stage stays as-is.
 - This entire stage is **uncommitted**, same as Stage 3.
+
+---
+
+## 2026-08-12 — Stage 5: Vercel AI SDK diagnostic agent (generateText + tool calling)
+
+**Not committed** — same as Stage 3/4, working-tree changes only.
+
+### Design change from the original Stage 3-era plan wording: `generateText`+tools, not `generateObject`
+
+Earlier docs (Stage 1's audit, `AGENTS.md`'s pre-Stage-5 notes) described the
+target as "generateObject + tool calling." That combination doesn't exist in
+the AI SDK — `generateObject()` is single-shot structured extraction with no
+tool-calling loop at all. What the master plan actually needs (investigate
+via `getHistoricalBaseline`/`getHardwareManual`, *then* produce a structured
+verdict) is `generateText()` with `tools` and `stopWhen: stepCountIs(n)`, plus
+a **schema-only "final answer" tool** (`submitDiagnosis`: an `inputSchema`
+with no `execute`) — the model's call to it is validated against the schema
+and lands in `result.toolCalls`, and having no result to append is what
+naturally ends the loop. `AGENTS.md`'s "Building an AI feature" section and
+`README.md`'s "Building an AI feature here" section were both corrected to
+document this distinction properly, citing this module as the reference
+implementation.
+
+### What changed
+
+- **New module: `apps/api/src/modules/diagnostics/`** — no controller (an
+  internal service the BullMQ consumer calls, not an HTTP feature):
+  - `tools/get-historical-baseline.tool.ts` — `queryHistoricalBaseline()`
+    (pure-ish, takes a `DbService`) aggregates the last 24h of `telemetry_logs`
+    for one device via Drizzle's `avg()`/`count()`, returning sample count and
+    per-metric averages (`null` for metrics that device type never reports).
+    `createGetHistoricalBaselineTool()` closes over `deviceId` — the calling
+    service already knows definitively which device triggered a diagnosis, so
+    the model is never asked to supply an ID it could get wrong.
+  - `tools/get-hardware-manual.tool.ts` — `lookupHardwareManual()`, a pure
+    static lookup table keyed by device type + anomaly kind
+    (`THERMAL_RUNAWAY`/`VOLTAGE_SAG`), explicitly documented in its own
+    comment as placeholder troubleshooting text, not real manufacturer data —
+    same honesty standard as the telemetry simulator standing in for real
+    hardware.
+  - `diagnostics.service.ts` — `DiagnosticsService.diagnose(deviceId,
+    triggeringReading)`: loads the `DeviceAsset` (404s if missing, without
+    ever calling the model), runs `generateText()` with both tools plus
+    `submitDiagnosis` and `stopWhen: stepCountIs(3)`, extracts the
+    `submitDiagnosis` tool call from `result.toolCalls` (throws a clear error
+    naming the step limit and `finishReason` if the model never called it),
+    re-validates its `input` against the proposal schema, then inserts the
+    `FaultDiagnostic` with `status: 'PENDING_APPROVAL'` set by the service
+    itself — never by the model, which is the whole point of the HITL gate.
+  - `diagnostics.module.ts` — imports `DbModule`, exports `DiagnosticsService`.
+- **The model-facing proposal shape isn't a new hand-written schema** —
+  `diagnosisProposalSchema` is `faultDiagnosticInsertSchema.pick({ severity,
+  faultType, summary, recommendedAction, requiresImmediateDispatch })`, reusing
+  Stage 3's table-derived schema and excluding exactly the fields the service
+  fills in deterministically (`deviceId`, `status`, `id`, `createdAt`) —
+  consistent with the "one definition, not two" principle Stage 3 established
+  for the tables themselves.
+- **`apps/api/src/modules/telemetry-ingestion/ai-diagnostic-trigger.service.ts`**
+  — the Stage 4 seam is now live: constructor-injects `DiagnosticsService`,
+  `trigger()` calls `diagnose()` inside a try/catch that **swallows** any
+  error (logs it, doesn't rethrow). Deliberate, not an oversight: this method
+  runs inside a BullMQ job that already did a non-idempotent DB insert (the
+  triggering `TelemetryLog` row); a thrown error here would fail the whole
+  job and cause BullMQ to retry it, re-inserting that row. `AGENTS.md`'s
+  resilience convention (decorative calls never throw, required calls
+  propagate) gained a concrete new case for this: a queue-triggered AI call
+  stacked on a non-idempotent write is decorative from the queue's
+  perspective even though the AI call itself is the point of the job.
+- **`telemetry-ingestion.module.ts`** — now imports `DiagnosticsModule` to
+  supply the `DiagnosticsService` dependency.
+- **`AGENTS.md`** — Structure section documents
+  `apps/api/src/modules/diagnostics/`; "Building an AI feature" section
+  rewritten to correctly distinguish `generateObject()` (single-shot
+  extraction) from `generateText()`+tools+`stopWhen` (agentic loops) from the
+  schema-only final-answer-tool pattern, citing `diagnostics.service.ts` as
+  the reference implementation.
+- **`README.md`** — "Where this project is right now" updated to state the
+  diagnostic agent exists; "Building an AI feature here" corrected to match
+  `AGENTS.md`'s generateObject-vs-generateText+tools distinction.
+
+### Three real bugs caught by actually running things, not by typecheck alone
+
+**1. `resolveModel()` returns a `Promise`, not a `LanguageModel` — this is
+its first real caller.** Predicted in Stage 4's own writeup ("Stage 5's
+diagnostic agent...will just `await` it") and confirmed exactly true: fixed
+by awaiting it at the `generateText({ model: await resolveModel(...) })`
+call site.
+
+**2. The core `ai` package itself is ESM-only in v7 — not just the
+`@ai-sdk/*` provider packages.** `pnpm test` failed with `SyntaxError: Cannot
+use import statement outside a module`, tracing into `ai/dist/index.js`'s own
+`import ... from "@ai-sdk/gateway"` — triggered by a static top-level `import
+{ tool } from 'ai'` in both tool factory files and `import { generateText,
+stepCountIs, tool } from 'ai'` in `diagnostics.service.ts`. Same root cause
+as Stage 4's `resolveModel()` fix, one layer further out: apps/api compiles
+to CommonJS, `ai` v7 declares `"type": "module"` with no CJS build, so a
+static import crashes at module-load time — under Jest immediately, and
+would have crashed the real compiled backend at boot too. Fixed identically:
+`tool`/`generateText`/`stepCountIs` are now imported via `await
+import('ai')` inside the async functions that use them; only the `import
+type { Tool } from 'ai'` type-only imports stayed static (erased at compile
+time, no runtime `require`). **Verified beyond Jest passing**: since
+`diagnose()`'s dynamic import never actually executes during a normal boot
+(nothing triggers a real diagnosis at startup), wrote a standalone script run
+directly against the compiled-CommonJS tsconfig that forces the same import
+path — `await import('ai')` resolved `generateText`/`tool`/`stepCountIs` as
+real functions, and `createGetHistoricalBaselineTool()` produced a genuine
+`Tool` object (`description`/`inputSchema`/`execute` keys) — then deleted the
+script.
+
+**3. `TS2742` declaration-emit errors on both tool factory functions.**
+`declaration: true` requires every exported function's return type to be
+portably nameable; the tool factories' inferred return types involved
+deeply-nested generics from `ai` that couldn't be named. First fix attempt
+(`ReturnType<typeof tool>`) was wrong — `tool()` is overloaded, and that
+expression resolves to the *last* overload (`Tool<never, never>`), producing
+a different, more confusing type error at each `execute` implementation.
+Corrected with explicit annotations naming the real generic parameters:
+`Promise<Tool<Record<string, never>, HistoricalBaseline>>` and
+`Promise<Tool<{ symptom: AnomalyKind }, string>>`.
+
+### Testing the ESM-only pieces required more than the usual mock
+
+`diagnostics.service.spec.ts` needed two `jest.mock()` calls:
+- `jest.mock('ai', ...)` as a **fully manual** mock object — not `{
+  ...jest.requireActual('ai'), generateText: jest.fn() }`, since
+  `jest.requireActual('ai')` hits the exact same ESM-only load failure as a
+  static import would. `tool`/`stepCountIs` got inert pass-through
+  implementations (nothing in these tests inspects their output, since the
+  thing that would normally call them — a real `generateText()` — is mocked
+  out entirely too).
+- `jest.mock('../../common/ai/model-registry', ...)` — `resolveModel()`
+  dynamically imports a real `@ai-sdk/openai` package internally, which hits
+  the same problem; mocked to resolve an empty object, not because its own
+  logic needed re-testing here (verified separately in Stage 4 via a
+  standalone `ts-node` script for the same reason it can't run under Jest).
+- One initialization-order bug along the way: `mockGenerateText` was
+  `undefined` inside `beforeEach` because a `jest.mock()` factory only
+  executes lazily on the *first* real load of the module — here, that's deep
+  inside a test's `diagnose()` call, after `beforeEach` already needed a live
+  reference. Fixed by declaring `const mockGenerateText = jest.fn()` *before*
+  and *outside* the `jest.mock()` call, referenced from inside the factory
+  (works correctly under `ts-jest`, which — unlike `babel-jest` — doesn't
+  hoist `jest.mock()` above regular top-to-bottom module code).
+- 4 test cases: successful diagnosis persists with `status:
+  'PENDING_APPROVAL'`; missing device throws without ever calling the model;
+  missing `submitDiagnosis` call throws a clear step-limit error naming
+  `finishReason`; a `submitDiagnosis` call with an invalid proposal shape
+  throws from the re-validation.
+
+### Verification
+
+- `pnpm typecheck` — 4/4 pass.
+- `pnpm test` — 11 suites, 58 tests pass (12 new: 4 `diagnostics.service`,
+  4 `get-historical-baseline` query logic, 2 `get-hardware-manual` lookup
+  logic, plus `ai-diagnostic-trigger.service.spec.ts` rewritten from a
+  logging-stub check to delegation + error-swallowing coverage).
+- `pnpm build` — all 3 packages succeed (`apps/web`'s `/api/chat` route
+  included, `apps/api`'s `nest build` succeeded).
+- Compiled backend boot (`node dist/src/main.js`) against an unreachable
+  `DATABASE_URL` — reaches `DiagnosticsModule dependencies initialized` with
+  no DI/circular-import error (same discipline as Stage 4's circular-import
+  catch), then the same correct `ECONNREFUSED` from the health check's real
+  `SELECT 1` query as every prior stage's boot smoke test.
+- Standalone runtime script (see bug #2 above) — confirms `await
+  import('ai')` and the tool factories genuinely work under real Node
+  CommonJS execution, not just Jest's mocks.
+
+### Still pending
+
+- Applying the migration and actually exercising `diagnose()` against a real
+  model/database/Redis — no live credentials in this environment for any of
+  the three.
+- Stage 6 (dashboard) is what will let a human actually see and act on a
+  `PENDING_APPROVAL` `FaultDiagnostic` — right now these rows are created but
+  nothing surfaces or approves/rejects them.
+- This entire stage is **uncommitted**, same as Stage 3/4.

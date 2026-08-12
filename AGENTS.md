@@ -6,9 +6,7 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 `gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`). Redis + BullMQ back the telemetry-ingestion queue.
 
-Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for what's built so far and what's next.
-
-What's already load-bearing: the provider-agnostic AI model registry (`apps/api/src/common/ai/model-registry.ts`), Clerk-linked user settings incl. BYOK (`apps/api/src/modules/users/`), BYOK encryption (`apps/api/src/common/crypto/`), telemetry ingestion (`apps/api/src/modules/telemetry-ingestion/` — simulator producer + BullMQ consumer, with an injectable `AiDiagnosticTriggerService` stub as the seam Stage 5's diagnostic agent plugs into).
+Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for build history and what's next — this file only states current rules, not status.
 
 ## Architecture & SOLID principles
 
@@ -35,8 +33,15 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       telemetry-simulator.service.ts (producer, gated by TELEMETRY_SIMULATOR_ENABLED)
                                       + telemetry-queue.consumer.ts (BullMQ @Processor) + pure logic split into
                                       its own testable file per concern (telemetry-reading-generator.ts,
-                                      telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts (Stage 5 seam)
-  src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared (no schema.ts here anymore)
+                                      telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts, which delegates
+                                      to DiagnosticsModule (below)
+  src/modules/diagnostics/          no controller either — triggered via DI from telemetry-ingestion, not HTTP.
+                                      diagnostics.service.ts (generateText + tools + a schema-only "submit" tool,
+                                      see "Building an AI feature") + tools/get-historical-baseline.tool.ts
+                                      (real DB aggregate query) + tools/get-hardware-manual.tool.ts (a clearly-
+                                      documented stub knowledge base — no real manufacturer data behind it,
+                                      same honesty as the telemetry simulator)
+  src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared; never define a table here
   src/common/crypto/          BYOK AES-256-GCM encryption
   src/common/ai/              model-registry.ts — the only place a provider SDK is imported, ever
   scripts/                    one-off scripts run via ts-node, outside the Nest DI graph (e.g. seed-devices.ts)
@@ -87,23 +92,32 @@ A shape gets defined **once**, in `packages/shared`, and both apps import that s
 
 **Start with the simplest structure that solves the problem — add orchestration only when the task actually needs it.** Most features here are a single augmented call: a prompt, the relevant tools, and a Zod schema for the output. Reach for a multi-step agent loop only when the model genuinely has to decide *which* tools to call and in *what order* for an open-ended problem — not by default, and not because it looks more sophisticated. An unnecessary agent loop is just more surface area for the same job a single call would do.
 
-**Folder shape for a new AI-calling feature module** (`apps/api/src/modules/<feature>/`):
+**Folder shape for a new AI-calling feature module** (`apps/api/src/modules/<feature>/`) — reference implementation: `apps/api/src/modules/diagnostics/`:
 ```
 <feature>.module.ts
-<feature>.controller.ts        — HTTP surface only, delegates immediately
-<feature>.service.ts           — orchestration: builds the prompt, calls generateObject()/tool(), returns the validated result
-<feature>.service.spec.ts
+<feature>.controller.ts        — HTTP surface, if the feature has one. diagnostics/ has none: it's
+                                  triggered internally (telemetry-ingestion's AiDiagnosticTriggerService
+                                  calls it via DI), not by a direct request — controller is optional,
+                                  not a fixed part of the shape.
+<feature>.service.ts           — orchestration: builds the prompt, calls generateObject()/generateText()+tool(),
+                                  returns the validated result
+<feature>.service.spec.ts      — mock the AI SDK call itself (jest.mock('ai'), keep tool()/stepCountIs real),
+                                  not just its inputs — see diagnostics.service.spec.ts
 tools/
   <tool-name>.tool.ts           — one file per tool: a pure function + its own Zod input schema
   <tool-name>.tool.spec.ts      — tools are pure functions, trivially unit-testable without touching the LLM
 ```
-The structured-output schema (what the model must return) and any request/response DTOs live in `packages/shared`, per the single-source-of-truth rule above — imported by both the service (to bind `generateObject`) and the frontend (to type whatever reads the result).
+The structured-output schema (what the model must return) and any request/response DTOs live in `packages/shared`, per the single-source-of-truth rule above — imported by both the service (to bind `generateObject`) and the frontend (to type whatever reads the result). Where the shape is a subset of an existing table (e.g. a diagnosis proposal is most of `FaultDiagnostic` minus the fields the service fills in deterministically), derive it with `.pick()` off the table's derived schema rather than writing a parallel one — see `diagnostics.service.ts`'s `diagnosisProposalSchema`.
 
 **Rules that don't bend regardless of structure:**
-- Use `generateObject()`/`tool()` bound directly to a Zod schema — never `generateText()` plus hand-rolled JSON parsing. No manual JSON parsing, no malformed-response repair logic.
-- Tools are the interface the model acts through — treat each one like a small public API: one clear job, an unambiguous name, a minimal, precisely-typed input schema. A vague or overloaded tool produces vague or wrong tool calls.
+- **No tool calls needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema.
+- **Tool calls needed → `generateText()` with `tools`, never `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. If the model needs to investigate before answering (query a baseline, look something up), that's `generateText()` with `tools` and a bounded `stopWhen: stepCountIs(n)`.
+- **A tool-calling loop that must end in a structured decision → give it a schema-only "final answer" tool, no `execute`.** The model calls it once, its `input` is validated against `inputSchema` by the AI SDK itself (found in `result.toolCalls`), and having no result to continue on is what makes the SDK stop the loop there — see `diagnostics.service.ts`'s `submitDiagnosis` tool. Never regex-extract a fenced JSON block from a `generateText()` response and hand-repair likely-malformed output — a validated tool-call input never needs parsing or repair, regardless of which function you're calling.
+- Tools are the interface the model acts through — treat each one like a small public API: one clear job, an unambiguous name, a minimal, precisely-typed input schema. A vague or overloaded tool produces vague or wrong tool calls. If the calling service already knows a value definitively (e.g. which device this diagnosis is for), close over it when constructing the tool rather than asking the model to supply it — see `createGetHistoricalBaselineTool(dbService, deviceId)`.
 - All financial/numeric estimates and pass/fail safety thresholds that get persisted or shown as fact must be computed deterministically in TypeScript, never left to the model — the model writes prose around numbers it's given, not numbers of its own.
-- Any model output that would trigger a real-world consequence (a dispatch, an approval, an irreversible write) is a human-in-the-loop checkpoint — persist it in a pending/awaiting-approval state and require an explicit human action before anything downstream acts on it. Never auto-execute off a raw model response.
+- Any model output that would trigger a real-world consequence (a dispatch, an approval, an irreversible write) is a human-in-the-loop checkpoint — persist it in a pending/awaiting-approval state and require an explicit human action before anything downstream acts on it. Never auto-execute off a raw model response. The status field is always set deterministically by the service (`'PENDING_APPROVAL'`), never taken from the model's output — see `diagnosisProposalSchema`'s `.pick()` explicitly excluding `status`.
+- An autonomous, non-request-triggered AI call (a queue consumer, a cron job — anything not acting on behalf of a specific logged-in user) resolves the model via `DEFAULT_MODEL_KEY` with no BYOK override — there's no per-user key to use when nobody made the request.
+- A failed AI call triggered from a queue job is typically a decorative-call failure (per the resilience convention above), not a required one — swallow it at the trigger boundary rather than letting the whole job fail and retry, *especially* if the job also does a non-idempotent write (a duplicate DB insert on retry is worse than a missing diagnosis) — see `AiDiagnosticTriggerService`.
 - BYOK: a user's own provider API key, AES-256-GCM encrypted at rest (`apps/api/src/common/crypto/`), decrypted only at call time and never logged — see `UsersService.getDecryptedApiKey`.
 
 ## Auth
