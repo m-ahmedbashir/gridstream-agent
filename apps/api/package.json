@@ -1,5 +1,5 @@
 {
-  "name": "@maintain/backend",
+  "name": "@gridstream/api",
   "version": "0.0.1",
   "description": "",
   "author": "Ahmed Bashir",
@@ -34,7 +34,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
-    "@maintain/shared": "workspace:*",
+    "@gridstream/shared": "workspace:*",
     "ai": "^7.0.62",
     "drizzle-orm": "^0.44.6",
     "nestjs-zod": "^5.1.1",

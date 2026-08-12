@@ -23,7 +23,7 @@ importers:
       '@ai-sdk/openai':
         specifier: ^4.0.40
         version: 4.0.40(zod@4.3.6)
-      '@maintain/shared':
+      '@gridstream/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@nestjs/common':
@@ -159,12 +159,12 @@ importers:
       '@clerk/themes':
         specifier: ^2.2.26
         version: 2.4.57(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@gridstream/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@hookform/resolvers':
         specifier: ^5.2.1
         version: 5.2.2(react-hook-form@7.71.2(react@19.2.4))
-      '@maintain/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@radix-ui/react-accordion':
         specifier: ^1.2.3
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

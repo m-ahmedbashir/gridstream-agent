@@ -1,18 +1,18 @@
 {
-  "name": "maintain-agent",
+  "name": "gridstream-agent",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
-    "dev:frontend": "pnpm --filter @maintain/frontend dev",
-    "dev:backend": "pnpm --filter @maintain/backend dev",
+    "dev:frontend": "pnpm --filter @gridstream/web dev",
+    "dev:backend": "pnpm --filter @gridstream/api dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "db:generate": "pnpm --filter @maintain/backend db:generate",
-    "db:migrate": "pnpm --filter @maintain/backend db:migrate"
+    "db:generate": "pnpm --filter @gridstream/api db:generate",
+    "db:migrate": "pnpm --filter @gridstream/api db:migrate"
   },
   "keywords": [],
   "author": "Ahmed Bashir",

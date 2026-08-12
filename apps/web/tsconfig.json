@@ -25,8 +25,8 @@
       "~/*": [
         "./public/*"
       ],
-      "@maintain/shared": [
-        "../../packages/shared/index.ts"
+      "@gridstream/shared": [
+        "../../packages/shared/src/index.ts"
       ],
     },
     "incremental": true,

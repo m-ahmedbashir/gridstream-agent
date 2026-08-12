@@ -134,7 +134,7 @@ gridstream-agent/
 │           └── modules/
 │               └── users/        # Clerk-linked settings, BYOK key management
 ├── packages/
-│   └── shared/                  # @maintain/shared — Zod schemas + types, shared by both apps
+│   └── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
 ├── AGENTS.md                    # rules for any coding agent working in this repo
 ├── REFACTOR_PROGRESS.md         # stage-by-stage log of the maintain-agent → gridstream-agent pivot
 ├── turbo.json
@@ -210,8 +210,8 @@ pnpm run typecheck  # tsc --noEmit across every workspace
 
 ## 🚀 Deployment
 
-- **Frontend (Vercel):** Build: `pnpm build --filter=@maintain/frontend`
-- **Backend (Railway):** Build: `pnpm build --filter=@maintain/backend`
+- **Frontend (Vercel):** Build: `pnpm build --filter=@gridstream/web`
+- **Backend (Railway):** Build: `pnpm build --filter=@gridstream/api`
 
 (This is separate from the [CI workflow](.github/workflows/ci.yml) above, which typechecks and tests every push/PR — it doesn't deploy anything.)
 

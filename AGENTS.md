@@ -4,7 +4,7 @@ Instructions for any AI coding agent working in this repository. Read before tou
 
 ## What this is
 
-`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@maintain/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`).
+`gridstream-agent` — pnpm + Turborepo monorepo. NestJS API (`apps/api`) + Next.js 16 dashboard (`apps/web`), sharing Zod schemas via `packages/shared` (`@gridstream/shared`). PostgreSQL is the persistence layer, accessed via Drizzle ORM (`drizzle-orm` + `pg`).
 
 Domain: an event-driven IoT telemetry / Virtual Power Plant (VPP) diagnostic pipeline for green-tech energy assets (solar, battery, heat pumps, EV wallboxes). See `REFACTOR_PROGRESS.md` for what's built so far and what's next.
 
@@ -43,7 +43,7 @@ apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
   __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
 
-packages/shared/            Zod domain schemas + types, imported by both apps as `@maintain/shared`
+packages/shared/            Zod domain schemas + types, imported by both apps as `@gridstream/shared`
   src/schemas/                 currently empty — add new domain schemas here as they're built
 ```
 
@@ -65,7 +65,7 @@ A shape gets defined **once**, in `packages/shared`, and both apps import that s
 
 - **Define once:** a new request or response shape is a Zod schema added to `packages/shared/src/schemas/`, exported from `packages/shared/src/index.ts`. Not inline in a controller, not inline in a frontend hook.
 - **Backend reuses it for everything:** the same schema validates the incoming request, binds the AI SDK call (`generateObject`), and — via `z.infer<typeof Schema>` — becomes the service's parameter/return type. One definition, three jobs.
-- **Frontend reuses the identical import:** a TanStack Query hook's return type is `z.infer<typeof Schema>` imported from `@maintain/shared`, not a hand-typed `interface` that happens to look the same today. If the shape also needs client-side form validation, pass the same schema straight to `zodResolver()` instead of writing a parallel validation version.
+- **Frontend reuses the identical import:** a TanStack Query hook's return type is `z.infer<typeof Schema>` imported from `@gridstream/shared`, not a hand-typed `interface` that happens to look the same today. If the shape also needs client-side form validation, pass the same schema straight to `zodResolver()` instead of writing a parallel validation version.
 - Never hand-write a type duplicating a DB row shape either — derive it from the schema/ORM, don't redeclare it.
 
 ## Building an AI feature (Vercel AI SDK)
@@ -100,12 +100,12 @@ Clerk, on the frontend (`apps/web`) only — no backend session/RBAC system, no 
 ## Environment & running things
 
 - Package manager is **pnpm** (`pnpm@10.30.3`) — don't use npm/yarn.
-- `pnpm dev` (root) runs both apps in parallel via Turborepo. `pnpm --filter @maintain/backend dev` / `pnpm --filter @maintain/frontend dev` run one at a time.
+- `pnpm dev` (root) runs both apps in parallel via Turborepo. `pnpm --filter @gridstream/api dev` / `pnpm --filter @gridstream/web dev` run one at a time.
 - Backend env: `apps/api/.env` (copy from `apps/api/.env.example`) — needs at minimum `DATABASE_URL` and one model provider key (`OPENROUTER_API_KEY` is the free default).
 - Frontend env: `apps/web/.env` (copy from `apps/web/env.example.txt`) — Clerk keys optional in dev (keyless mode).
 - `pnpm build` / `pnpm test` / `pnpm typecheck` / `pnpm lint` (root) all fan out via Turborepo to every package — run these, not a per-package script, when verifying a cross-cutting change.
 
 ## Deployment
 
-- Backend: Railway, via `pnpm build --filter=@maintain/backend`.
-- Frontend: Vercel, via `pnpm build --filter=@maintain/frontend`.
+- Backend: Railway, via `pnpm build --filter=@gridstream/api`.
+- Frontend: Vercel, via `pnpm build --filter=@gridstream/web`.

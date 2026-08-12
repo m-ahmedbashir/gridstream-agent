@@ -1,7 +1,7 @@
 {
-  "name": "@maintain/shared",
+  "name": "@gridstream/shared",
   "version": "1.0.0",
-  "description": "Shared types and utilities for the maintain-agent monorepo",
+  "description": "Shared types and utilities for the gridstream-agent monorepo",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

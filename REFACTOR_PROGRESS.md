@@ -467,3 +467,50 @@ boot against a genuinely unreachable `DATABASE_URL` now fails with a real
 - `resolveModel()` called directly via `ts-node` under the real
   `commonjs`-target tsconfig — resolves a real model object.
 - `pnpm build` (frontend) — succeeds, `/api/chat` route compiles.
+
+---
+
+## 2026-08-12 — Package renames: `@maintain/*` → `@gridstream/*`
+
+Resolves the rename decision left pending in the Stage 2 plan entry above.
+Root package renamed `maintain-agent` → `gridstream-agent`; the three
+workspace packages renamed to match their directory names exactly:
+`@maintain/backend` → `@gridstream/api`, `@maintain/frontend` →
+`@gridstream/web`, `@maintain/shared` → `@gridstream/shared`.
+`packages/shared`'s directory path is unchanged — only its package `name`
+and description moved; the `@repo/ai-config` rename floated in the original
+Stage 2 plan was not done, since that's a rename tied to the still-pending
+domain pivot (Stage 3), not this scope-name cleanup.
+
+### What changed
+
+- Root `package.json`: `name` field, and the `--filter @maintain/...` targets
+  in `dev:frontend`/`dev:backend`/`db:generate`/`db:migrate`.
+- `apps/api/package.json`: `name` → `@gridstream/api`, its
+  `@maintain/shared` dependency → `@gridstream/shared`.
+- `apps/web/package.json`: `name` → `@gridstream/web`, same dependency
+  rename. `apps/web/tsconfig.json`'s `@maintain/shared` path alias renamed
+  to `@gridstream/shared` — also fixed its target path in the same edit,
+  which pointed at a nonexistent `packages/shared/index.ts` (the real file
+  is `packages/shared/src/index.ts`); harmless since nothing in `apps/web/src`
+  actually imports the alias today (confirmed by grep before touching it),
+  but there was no reason to carry a broken path forward while renaming it.
+- `packages/shared/package.json`: `name` → `@gridstream/shared`,
+  description's `maintain-agent` → `gridstream-agent`. `src/index.ts`'s
+  header comment (`@maintain/shared` → `@gridstream/shared`).
+- Confirmed via grep before starting that no `.ts` source file anywhere in
+  `apps/api/src` or `apps/web/src` imports `@maintain/shared` by name
+  today (everything that used to needed it — the maintenance-domain schemas
+  — was deleted in an earlier pass) — so this was a purely mechanical
+  package.json/tsconfig/docs rename, zero source-import updates needed.
+- `AGENTS.md` and `README.md`: every `@maintain/backend`/`@maintain/frontend`/
+  `@maintain/shared` and `--filter=@maintain/...` reference updated to the
+  new names. `goal.md` (the old product brief, already documented elsewhere
+  as historical/unmaintained) was deliberately left untouched — out of scope.
+
+### Verification
+
+- `pnpm install` — lockfile updated cleanly, Turbo's own scope listing now
+  reads `@gridstream/api, @gridstream/shared, @gridstream/web`.
+- `pnpm typecheck` — 4/4 pass. `pnpm test` — 3 suites, 25 tests pass.
+  `pnpm build` — both apps succeed.
