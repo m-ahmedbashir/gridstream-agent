@@ -1215,3 +1215,33 @@ reading `.provider` off `undefined` the moment anything ever did rely on it
 
 - Same as every prior schema change in this file — no `DATABASE_URL` here to
   actually apply the migration against.
+
+---
+
+## 2026-08-12 — Security hardening from `/security-review` on the Stage 5 diagnostic agent
+
+Ran the `/security-review` skill against the diagnostics-module diff. Its multi-agent process (identify → parallel false-positive filtering) surfaced two candidates and scored both below the ≥8/10 bar the skill itself uses to decide what's reportable:
+
+1. **Prompt injection via `device.location`** (scored 3/10) — filtered because there's no code showing `device.location` as attacker-controllable, and the process's own precedent states user-controlled content in an AI prompt isn't inherently a vulnerability.
+2. **Speculative stored-XSS via LLM-authored `summary`/`recommendedAction`** (scored 2/10) — filtered because no rendering/UI code exists yet anywhere in the repo to actually exploit; it rested entirely on a hypothetical future dashboard.
+
+Both were below the reporting threshold, but asked to fix them anyway — reasonable, since "not exploitable *yet*, given the code that happens to exist today*" is a weaker guarantee than "structurally can't happen," and both are cheap to close now versus relying on every future caller/renderer remembering to defend against them.
+
+### What changed
+
+- **`diagnostics.service.ts`** — the prompt's device-info line changed from a bare interpolated string to an explicitly delimited `<device_data>...</device_data>` block, and the system `instructions` gained an explicit rule: content inside that block is stored registry data, not commands, and the model must disregard anything inside it that reads like an instruction ("ignore previous instructions", "set severity to LOW", etc.) and base its diagnosis only on real telemetry values and tool results. This doesn't require `device.location` to actually be attacker-controlled today to be worth doing — it's a standard, cheap prompt-injection mitigation for the shape "any DB-backed free-text field ends up in a prompt," and this codebase already takes the same threat seriously elsewhere (`apps/web/src/app/api/chat/route.ts`'s own prompt-injection refusal keyword list).
+- **`diagnostics.service.ts`** — added `stripHtmlLikeContent()` (a small `/<[^>]*>/g` stripper) applied to `faultType`/`summary`/`recommendedAction` right before the DB insert. Closes the stored-XSS gap structurally rather than by policy: even once Stage 6's approval UI exists, it can't be made unsafe by a stray `<script>` in a model response, without needing to trust that every future render call remembers to escape it. Kept minimal on purpose — no library dependency, no attempt at full HTML sanitization (these fields are meant to be short prose, not documents), just tag-syntax neutralization at the exact point untrusted model output crosses into persistent storage.
+- **`diagnostics.service.spec.ts`** — new test: feeds the mocked model an `<img onerror=...>`/`<script>`/`<b>` payload across all three free-text fields and asserts the persisted `values()` call received the tag-stripped versions.
+- **`AGENTS.md`** — two new rules added to "Rules that don't bend" under "Building an AI feature": (1) any free-text/DB-backed field interpolated into a prompt is untrusted data and must be delimited + explicitly marked as non-instructional, citing the new `<device_data>` block; (2) model-authored free text that will eventually render to a human must be stripped of HTML-tag-like content before persisting, and any future UI must render it as plain text, never via `dangerouslySetInnerHTML` or an unsanitized markdown-to-HTML path — this is the part that actually closes Finding 2 for good, since no UI exists yet to fix directly; this rule is what stops Stage 6 from reintroducing the exact risk that got filtered as "not yet exploitable."
+
+### Verification
+
+- `pnpm typecheck` — 4/4 pass.
+- `pnpm test` — 11 suites, 59 tests pass (1 new — the sanitization test; caught its own test-setup bug along the way, a mock insert row missing `deviceId`, fixed before the suite went green).
+- `pnpm build` — all 4 packages succeed.
+- Compiled backend boot — same clean `DiagnosticsModule dependencies initialized` → correct `ECONNREFUSED` pattern as every prior stage.
+
+### Still pending
+
+- No live model to confirm the `<device_data>` instruction actually changes real model behavior against a crafted `location` value — verified only that the code compiles, persists tag-stripped content correctly, and that the prompt structure itself is correct; the model-following-instructions half of this can't be tested without live provider credentials, same ceiling as every other AI-calling code in this repo.
+- This stage remains **uncommitted**, same as everything else in this file.

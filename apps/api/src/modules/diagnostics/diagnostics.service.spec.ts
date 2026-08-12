@@ -125,4 +125,32 @@ describe('DiagnosticsService', () => {
 
         await expect(service.diagnose('device-1', READING)).rejects.toThrow();
     });
+
+    it('strips HTML-tag-like content from the model\'s free-text fields before persisting', async () => {
+        // Defense-in-depth: even though the model is instructed not to produce
+        // markup, nothing stops it from doing so anyway — a future approval UI
+        // (not built yet) must not be the only thing standing between a model
+        // response and stored HTML.
+        const proposal = {
+            severity: 'HIGH',
+            faultType: '<img src=x onerror=alert(1)>Battery thermal runaway',
+            summary: 'Battery temperature exceeded safe range.<script>alert(document.cookie)</script>',
+            recommendedAction: 'Dispatch a technician<b> to inspect cooling</b>.',
+            requiresImmediateDispatch: true,
+        };
+        mockGenerateText.mockResolvedValue({ output: proposal, finishReason: 'stop' });
+
+        const { dbService, valuesMock } = makeDbMock(DEVICE, { id: 'fault-1', deviceId: 'device-1', ...proposal, status: 'PENDING_APPROVAL', createdAt: new Date() });
+        const service = new DiagnosticsService(dbService);
+
+        await service.diagnose('device-1', READING);
+
+        expect(valuesMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                faultType: 'Battery thermal runaway',
+                summary: 'Battery temperature exceeded safe range.alert(document.cookie)',
+                recommendedAction: 'Dispatch a technician to inspect cooling.',
+            }),
+        );
+    });
 });
