@@ -7,6 +7,8 @@ import Redis from 'ioredis';
 import { DbModule } from './common/db/db.module';
 import { UsersModule } from './modules/users/users.module';
 import { TelemetryIngestionModule } from './modules/telemetry-ingestion/telemetry-ingestion.module';
+import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module';
+import { DevicesModule } from './modules/devices/devices.module';
 
 @Module({
   imports: [
@@ -23,6 +25,12 @@ import { TelemetryIngestionModule } from './modules/telemetry-ingestion/telemetr
     DbModule,
     UsersModule,
     TelemetryIngestionModule,
+    // Already pulled in transitively via TelemetryIngestionModule (for the
+    // AI diagnostic trigger), but NestJS module resolution doesn't register
+    // a module's controllers unless it's imported at the app level too —
+    // this is what actually turns on DiagnosticsController's HTTP surface.
+    DiagnosticsModule,
+    DevicesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

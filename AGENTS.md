@@ -35,14 +35,21 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       its own testable file per concern (telemetry-reading-generator.ts,
                                       telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts, which delegates
                                       to DiagnosticsModule (below)
-  src/modules/diagnostics/          no controller either — triggered via DI from telemetry-ingestion, not HTTP.
-                                      diagnostics.service.ts (generateText + tools + Output.object() for the
+  src/modules/diagnostics/          diagnostics.service.ts (generateText + tools + Output.object() for the
                                       final structured answer, see "Building an AI feature") + tools/get-
                                       historical-baseline.tool.ts (real DB aggregate query) + tools/get-
                                       hardware-manual.tool.ts (a clearly-documented stub knowledge base — no
                                       real manufacturer data behind it, same honesty as the telemetry simulator)
+                                      + diagnostics.controller.ts (list/approve/reject — the one HTTP surface
+                                      on this module, guarded by ClerkAuthGuard; diagnose() itself is still
+                                      only triggered via DI from telemetry-ingestion, never over HTTP)
+  src/modules/devices/               devices.service.ts + devices.controller.ts — read-only device-asset
+                                      listing for the dashboard, same ClerkAuthGuard as diagnostics
   src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared; never define a table here
   src/common/crypto/          BYOK AES-256-GCM encryption
+  src/common/auth/            clerk-auth.guard.ts (verifies a Clerk session JWT via @clerk/backend) +
+                                clerk-user-id.decorator.ts (@ClerkUserId(), reads the guard's verified result)
+                                — see "Auth" below
   scripts/                    one-off scripts run via ts-node, outside the Nest DI graph (e.g. seed-devices.ts)
   drizzle.config.ts           drizzle-kit config — schema path points at packages/shared/src/db/schema.ts
   drizzle/                    generated SQL migrations — append-only, never hand-edit a committed one
@@ -52,7 +59,10 @@ apps/web/                  Next.js 16 App Router frontend (deployed to Vercel)
   src/app/api/chat/route.ts   the only AI-calling code in this app — a Route Handler (runs server-side in
                                 Node, never the browser), resolves its model through @gridstream/ai-config
                                 like any server-side AI call in either app
-  src/features/<feature>/     feature-scoped components + TanStack Query hooks (use-*.ts)
+  src/lib/api-client.ts        apiFetch() — the only place a fetch() to apps/api is made; attaches the
+                                caller's Clerk session token as a bearer token, throws ApiError on non-2xx
+  src/features/<feature>/     feature-scoped components + TanStack Query hooks (hooks/use-*.ts) — see
+                                features/diagnostics/ and features/devices/ for the reference shape
   src/components/ui/          shadcn/ui primitives — extend, don't hand-edit
   __CLEANUP__/                 leftover starter-template feature-flag stripper, unrelated to this app's domain
 
@@ -138,14 +148,19 @@ The structured-output schema (what the model must return) and any request/respon
 
 ## Auth
 
-Clerk, on the frontend (`apps/web`) only — no backend session/RBAC system, no Postgres RLS. The backend trusts a `userId`/`clerkId` passed from the frontend and upserts a `User` row on first sight rather than validating a session itself. Don't assume a guard or middleware is enforcing auth on the backend — none exists yet.
+Clerk on the frontend (`apps/web`) always. On the backend (`apps/api`), two different trust levels coexist — check which one a module actually uses before assuming either:
+
+- **Real, verified auth**: `ClerkAuthGuard` (`apps/api/src/common/auth/clerk-auth.guard.ts`) verifies a Clerk session JWT server-side via `@clerk/backend`'s `verifyToken()`, reading it from `Authorization: Bearer <token>`. Fails closed — a missing `CLERK_SECRET_KEY` throws immediately rather than letting requests through unverified. A guarded controller reads the verified identity via `@ClerkUserId()` (`clerk-user-id.decorator.ts`), never from a client-supplied field. `DiagnosticsController` and `DevicesController` use this — they expose operationally sensitive VPP data and a real HITL consequence gate (approve/reject), so an actual session check was worth the small amount of new infrastructure. On the frontend, a caller gets the token via Clerk's `useAuth().getToken()` and passes it to `apiFetch()` (`apps/web/src/lib/api-client.ts`).
+- **The older open trust model**: `UsersController` still just reads `@Query('userId')` — a plain string, unverified — and trusts it. Predates `ClerkAuthGuard`; not retrofitted as part of adding the guard, since changing an existing endpoint's auth behavior wasn't this task's scope. Don't copy this pattern for a new endpoint — use `ClerkAuthGuard` instead. No Postgres RLS either way; every guarded query still runs with full DB access, scoped only by what the query itself filters on.
+
+New endpoint default: guard it with `ClerkAuthGuard` unless there's a specific reason not to (e.g. a webhook receiver that can't carry a user's session token at all).
 
 ## Environment & running things
 
 - Package manager is **pnpm** (`pnpm@10.30.3`) — don't use npm/yarn.
 - `pnpm dev` (root) runs both apps in parallel via Turborepo. `pnpm --filter @gridstream/api dev` / `pnpm --filter @gridstream/web dev` run one at a time.
-- Backend env: `apps/api/.env` (copy from `apps/api/.env.example`) — needs at minimum `DATABASE_URL` and one model provider key (`OPENROUTER_API_KEY` is the free default).
-- Frontend env: `apps/web/.env` (copy from `apps/web/env.example.txt`) — Clerk keys optional in dev (keyless mode).
+- Backend env: `apps/api/.env` (copy from `apps/api/.env.example`) — needs at minimum `DATABASE_URL` and one model provider key (`OPENROUTER_API_KEY` is the free default). `CLERK_SECRET_KEY` is required for any `ClerkAuthGuard`-protected endpoint to work at all (fails closed without it, per "Auth" above); `FRONTEND_URL` controls CORS (defaults to the local Next.js dev server).
+- Frontend env: `apps/web/.env` (copy from `apps/web/env.example.txt`) — Clerk keys optional in dev (keyless mode). `NEXT_PUBLIC_API_URL` points at apps/api — required for any page under `dashboard/` that calls the backend (`apiFetch()` throws immediately if it's unset).
 - `pnpm build` / `pnpm test` / `pnpm typecheck` / `pnpm lint` (root) all fan out via Turborepo to every package — run these, not a per-package script, when verifying a cross-cutting change.
 
 ## Deployment

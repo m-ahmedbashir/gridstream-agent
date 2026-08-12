@@ -29,6 +29,22 @@ export const navItems: NavItem[] = [
     isActive: false,
     items: []
   },
+  {
+    title: 'Active Alerts',
+    url: '/dashboard/alerts',
+    icon: 'warning',
+    shortcut: ['a', 'a'],
+    isActive: false,
+    items: []
+  },
+  {
+    title: 'Devices',
+    url: '/dashboard/devices',
+    icon: 'devices',
+    shortcut: ['v', 'v'],
+    isActive: false,
+    items: []
+  },
   // {
   //   title: 'Account',
   //   url: '#',
