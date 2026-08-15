@@ -2,7 +2,7 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DeviceAsset, DevicesListResponse } from '@gridstream/shared';
+import type { DeviceAsset, DevicesListResponse, DeviceTelemetryHistoryResponse } from '@gridstream/shared';
 import { apiFetch } from '@/lib/api-client';
 
 export function useDevicesQuery() {
@@ -14,6 +14,24 @@ export function useDevicesQuery() {
       const token = await getToken();
       return apiFetch<DevicesListResponse>('/devices?limit=100', { token });
     },
+  });
+}
+
+/** Powers the telemetry chart on the alert-detail page (and, later, a device-detail page). */
+export function useDeviceTelemetryQuery(deviceId: string, hours = 24) {
+  const { getToken } = useAuth();
+
+  return useQuery({
+    queryKey: ['devices', deviceId, 'telemetry', hours],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiFetch<DeviceTelemetryHistoryResponse>(`/devices/${deviceId}/telemetry?hours=${hours}`, { token });
+    },
+    enabled: Boolean(deviceId),
+    // Historical telemetry for a fixed past window doesn't go stale within
+    // a single viewing session — avoids a redundant refetch on every
+    // remount (e.g. navigating away and back) within 30s.
+    staleTime: 30_000,
   });
 }
 

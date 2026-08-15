@@ -1,0 +1,1 @@
+CREATE INDEX "telemetry_logs_device_id_timestamp_idx" ON "telemetry_logs" USING btree ("device_id","timestamp");

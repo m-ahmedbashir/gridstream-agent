@@ -1,5 +1,11 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { deviceAssets, type DeviceAsset } from '@gridstream/shared';
 import { DbService } from '../../common/db/db.service';
@@ -19,7 +25,9 @@ const DEFAULT_INTERVAL_MS = 5000;
  * logs a warning each tick and does nothing.
  */
 @Injectable()
-export class TelemetrySimulatorService implements OnModuleInit, OnModuleDestroy {
+export class TelemetrySimulatorService
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(TelemetrySimulatorService.name);
   private intervalHandle?: NodeJS.Timeout;
 
@@ -30,13 +38,19 @@ export class TelemetrySimulatorService implements OnModuleInit, OnModuleDestroy 
 
   onModuleInit(): void {
     if (process.env.TELEMETRY_SIMULATOR_ENABLED !== 'true') {
-      this.logger.log('Telemetry simulator disabled (set TELEMETRY_SIMULATOR_ENABLED=true to enable).');
+      this.logger.log(
+        'Telemetry simulator disabled (set TELEMETRY_SIMULATOR_ENABLED=true to enable).',
+      );
       return;
     }
 
-    const intervalMs = Number(process.env.TELEMETRY_SIMULATOR_INTERVAL_MS) || DEFAULT_INTERVAL_MS;
+    const intervalMs =
+      Number(process.env.TELEMETRY_SIMULATOR_INTERVAL_MS) ||
+      DEFAULT_INTERVAL_MS;
     this.intervalHandle = setInterval(() => {
-      this.tick().catch((error) => this.logger.error('Simulator tick failed', error));
+      this.tick().catch((error) =>
+        this.logger.error('Simulator tick failed', error),
+      );
     }, intervalMs);
     this.logger.log(`Telemetry simulator started (every ${intervalMs}ms).`);
   }
@@ -48,7 +62,9 @@ export class TelemetrySimulatorService implements OnModuleInit, OnModuleDestroy 
   private async tick(): Promise<void> {
     const devices = await this.dbService.db.select().from(deviceAssets);
     if (devices.length === 0) {
-      this.logger.warn('No devices in device_assets to simulate telemetry for — run `pnpm db:seed` first.');
+      this.logger.warn(
+        'No devices in device_assets to simulate telemetry for — run `pnpm db:seed` first.',
+      );
       return;
     }
 
@@ -56,7 +72,10 @@ export class TelemetrySimulatorService implements OnModuleInit, OnModuleDestroy 
     await this.enqueueReading(device);
   }
 
-  private async enqueueReading(device: DeviceAsset, forceAnomaly = false): Promise<void> {
+  private async enqueueReading(
+    device: DeviceAsset,
+    forceAnomaly = false,
+  ): Promise<void> {
     const reading = generateReading(device, Math.random, forceAnomaly);
     await this.queue.add('ingest-reading', reading);
   }
@@ -70,16 +89,28 @@ export class TelemetrySimulatorService implements OnModuleInit, OnModuleDestroy 
    * gates the automatic background loop in onModuleInit(), not this
    * explicit, human-triggered action.
    */
-  async simulateChaosEvent(): Promise<{ deviceId: string; deviceType: DeviceAsset['deviceType']; serialNumber: string }> {
+  async simulateChaosEvent(): Promise<{
+    deviceId: string;
+    deviceType: DeviceAsset['deviceType'];
+    serialNumber: string;
+  }> {
     const devices = await this.dbService.db.select().from(deviceAssets);
     if (devices.length === 0) {
-      throw new NotFoundException('No devices to simulate a chaos event for — run `pnpm db:seed` first.');
+      throw new NotFoundException(
+        'No devices to simulate a chaos event for — run `pnpm db:seed` first.',
+      );
     }
 
     const device = devices[Math.floor(Math.random() * devices.length)];
     await this.enqueueReading(device, true);
 
-    this.logger.log(`Chaos event simulated for device ${device.id} (${device.serialNumber}).`);
-    return { deviceId: device.id, deviceType: device.deviceType, serialNumber: device.serialNumber };
+    this.logger.log(
+      `Chaos event simulated for device ${device.id} (${device.serialNumber}).`,
+    );
+    return {
+      deviceId: device.id,
+      deviceType: device.deviceType,
+      serialNumber: device.serialNumber,
+    };
   }
 }

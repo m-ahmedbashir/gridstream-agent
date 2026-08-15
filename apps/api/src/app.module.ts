@@ -17,9 +17,12 @@ import { DevicesModule } from './modules/devices/devices.module';
     // (see BullMQ's own docs) — without it, Worker construction throws.
     BullModule.forRootAsync({
       useFactory: () => ({
-        connection: new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
-          maxRetriesPerRequest: null,
-        }),
+        connection: new Redis(
+          process.env.REDIS_URL ?? 'redis://localhost:6379',
+          {
+            maxRetriesPerRequest: null,
+          },
+        ),
       }),
     }),
     DbModule,
@@ -35,4 +38,4 @@ import { DevicesModule } from './modules/devices/devices.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

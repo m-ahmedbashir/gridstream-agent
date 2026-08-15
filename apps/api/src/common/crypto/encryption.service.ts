@@ -9,23 +9,23 @@ import { encryptSecret, decryptSecret } from './byok-encryption';
  */
 @Injectable()
 export class EncryptionService {
-    private readonly key: string;
+  private readonly key: string;
 
-    constructor() {
-        const key = process.env.BYOK_ENCRYPTION_KEY;
-        if (!key) {
-            throw new Error(
-                'BYOK_ENCRYPTION_KEY is not set. Required to encrypt/decrypt user-supplied provider API keys — see .env.example.',
-            );
-        }
-        this.key = key;
+  constructor() {
+    const key = process.env.BYOK_ENCRYPTION_KEY;
+    if (!key) {
+      throw new Error(
+        'BYOK_ENCRYPTION_KEY is not set. Required to encrypt/decrypt user-supplied provider API keys — see .env.example.',
+      );
     }
+    this.key = key;
+  }
 
-    encrypt(plaintext: string): string {
-        return encryptSecret(plaintext, this.key);
-    }
+  encrypt(plaintext: string): string {
+    return encryptSecret(plaintext, this.key);
+  }
 
-    decrypt(ciphertext: string): string {
-        return decryptSecret(ciphertext, this.key);
-    }
+  decrypt(ciphertext: string): string {
+    return decryptSecret(ciphertext, this.key);
+  }
 }

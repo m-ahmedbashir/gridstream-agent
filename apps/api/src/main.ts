@@ -9,7 +9,10 @@ async function bootstrap() {
   // 1. CORS: restricted to the configured frontend origin (defaults to the
   // local Next.js dev server), not left wide open — this app now exposes
   // endpoints (diagnostics approve/reject) worth protecting.
-  app.enableCors({ origin: process.env.FRONTEND_URL ?? 'http://localhost:3000', credentials: true });
+  app.enableCors({
+    origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    credentials: true,
+  });
 
   // 2. Test database connection
   const dbService = app.get(DbService);

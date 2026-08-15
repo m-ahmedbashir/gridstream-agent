@@ -3,7 +3,11 @@ import { eq } from 'drizzle-orm';
 import { DbService } from '../../common/db/db.service';
 import { users } from '@gridstream/shared';
 import { EncryptionService } from '../../common/crypto/encryption.service';
-import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, type ModelKey } from '@gridstream/ai-config';
+import {
+  DEFAULT_MODEL_KEY,
+  MODEL_REGISTRY,
+  type ModelKey,
+} from '@gridstream/ai-config';
 
 export interface SettingsUpdate {
   planApprovalMode?: string;
@@ -54,21 +58,26 @@ export class UsersService {
     }
 
     // '' clears a saved key; undefined leaves it untouched; anything else gets encrypted.
-    const encryptedApiKey = updates.apiKey === undefined
-      ? undefined
-      : updates.apiKey === ''
-        ? null
-        : this.encryptionService.encrypt(updates.apiKey);
+    const encryptedApiKey =
+      updates.apiKey === undefined
+        ? undefined
+        : updates.apiKey === ''
+          ? null
+          : this.encryptionService.encrypt(updates.apiKey);
 
     // Only touching the fields actually provided, so changing one setting
     // never silently resets the others to a default. `updatedAt` is always
     // stamped explicitly — Drizzle's onConflictDoUpdate needs a non-empty
     // `set`, and this also gives us the same "touched now" semantics Prisma's
     // `@updatedAt` gave us automatically.
-    const updateSet: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
-    if (updates.planApprovalMode !== undefined) updateSet.planApprovalMode = updates.planApprovalMode;
+    const updateSet: Partial<typeof users.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+    if (updates.planApprovalMode !== undefined)
+      updateSet.planApprovalMode = updates.planApprovalMode;
     if (updates.modelKey !== undefined) updateSet.modelKey = updates.modelKey;
-    if (encryptedApiKey !== undefined) updateSet.encryptedApiKey = encryptedApiKey;
+    if (encryptedApiKey !== undefined)
+      updateSet.encryptedApiKey = encryptedApiKey;
 
     const [user] = await this.dbService.db
       .insert(users)

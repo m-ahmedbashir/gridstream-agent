@@ -41,16 +41,24 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       to DiagnosticsModule (below) + telemetry-ingestion.controller.ts (POST
                                       /telemetry/simulate-chaos, ClerkAuthGuard — the "Simulate Chaos Event"
                                       dashboard button, for demoing the pipeline without waiting on the timer)
-  src/modules/diagnostics/          diagnostics.service.ts (generateText + tools + Output.object() for the
-                                      final structured answer, see "Building an AI feature") + tools/get-
-                                      historical-baseline.tool.ts (real DB aggregate query) + tools/get-
-                                      hardware-manual.tool.ts (a clearly-documented stub knowledge base — no
-                                      real manufacturer data behind it, same honesty as the telemetry simulator)
-                                      + diagnostics.controller.ts (list/approve/reject — the one HTTP surface
-                                      on this module, guarded by ClerkAuthGuard; diagnose() itself is still
-                                      only triggered via DI from telemetry-ingestion, never over HTTP)
-  src/modules/devices/               devices.service.ts + devices.controller.ts — read-only device-asset
-                                      listing for the dashboard, same ClerkAuthGuard as diagnostics
+  src/modules/diagnostics/          diagnostics.service.ts (deterministic pre-fetch in TypeScript — historical
+                                      baseline + manufacturer guidance are fetched directly, not offered as
+                                      skippable AI SDK tools, since neither involves a real model decision —
+                                      then a single generateObject() call, see "Building an AI feature") +
+                                      tools/get-historical-baseline.tool.ts (real DB aggregate query, a plain
+                                      exported function) + tools/get-hardware-manual.tool.ts (a clearly-
+                                      documented stub knowledge base — no real manufacturer data behind it,
+                                      same honesty as the telemetry simulator; also a plain function)
+                                      + diagnostics.controller.ts (list/get-one/approve/reject — the one HTTP
+                                      surface on this module, guarded by ClerkAuthGuard; diagnose() itself is
+                                      still only triggered via DI from telemetry-ingestion, never over HTTP)
+                                      + diagnostic-confidence.ts (pure function — deterministic confidence
+                                      scoring from the same real, pre-fetched signals handed to the model, not
+                                      the model's own report; faultType and confidenceScore/Label/Factors are
+                                      never model-authored, see "Building an AI feature" below for why)
+  src/modules/devices/               devices.service.ts + devices.controller.ts — device-asset listing +
+                                      per-device telemetry history (GET /devices/:id/telemetry, powers the
+                                      alert-detail page's chart), same ClerkAuthGuard as diagnostics
   src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared; never define a table here
   src/common/crypto/          BYOK AES-256-GCM encryption
   src/common/auth/            clerk-auth.guard.ts (verifies a Clerk session JWT via @clerk/backend) +
@@ -129,21 +137,26 @@ A shape gets defined **once**, in `packages/shared`, and both apps import that s
                                   not a fixed part of the shape.
 <feature>.service.ts           — orchestration: builds the prompt, calls generateObject()/generateText()+tool(),
                                   returns the validated result
-<feature>.service.spec.ts      — mock the AI SDK call itself (jest.mock('ai'), keep tool()/stepCountIs/
-                                  Output.object real, inert passthroughs), not just its inputs — see
-                                  diagnostics.service.spec.ts
+<feature>.service.spec.ts      — mock the AI SDK call itself (jest.mock('ai')), not just its inputs — see
+                                  diagnostics.service.spec.ts (mocks generateObject + NoObjectGeneratedError;
+                                  a genuinely tool-calling feature would instead keep tool()/stepCountIs/
+                                  Output.object real as inert passthroughs, per the rule below)
 tools/
-  <tool-name>.tool.ts           — one file per tool: a pure function + its own Zod input schema
+  <tool-name>.tool.ts           — one file per tool: a pure function + its own Zod input schema. Only wrap
+                                  the function as an actual AI SDK `tool()` if the model has a real decision
+                                  to make about calling it — see the rule below. `diagnostics/tools/*.ts` are
+                                  plain exported functions today, not AI SDK tools, for exactly this reason.
   <tool-name>.tool.spec.ts      — tools are pure functions, trivially unit-testable without touching the LLM
 ```
 The structured-output schema (what the model must return) and any request/response DTOs live in `packages/shared`, per the single-source-of-truth rule above — imported by both the service (to bind `generateObject`) and the frontend (to type whatever reads the result). Where the shape is a subset of an existing table (e.g. a diagnosis proposal is most of `FaultDiagnostic` minus the fields the service fills in deterministically), derive it with `.pick()` off the table's derived schema rather than writing a parallel one — see `diagnostics.service.ts`'s `diagnosisProposalSchema`.
 
 **Rules that don't bend regardless of structure:**
-- **No tool calls needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema.
-- **Tool calls needed → `generateText()` with `tools`, never `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. If the model needs to investigate before answering (query a baseline, look something up), that's `generateText()` with `tools` and a bounded `stopWhen: stepCountIs(n)`.
-- **A tool-calling loop that must end in a structured decision → pass `output: Output.object({ schema })` to `generateText()`, read `result.output`.** This is the SDK's native mechanism for "investigate freely via `tools`, then bind the final answer to a schema" — the model stops calling tools when it's ready, and the SDK validates that final response against `schema` instead of returning plain text. Accessing `result.output` throws `NoOutputGeneratedError` if the model never converges within `stopWhen`'s step limit — catch that specifically for a clear error, don't let it surface as an opaque failure. See `diagnostics.service.ts`. Never regex-extract a fenced JSON block from a `generateText()` response and hand-repair likely-malformed output — `Output.object()`'s validated result never needs parsing or repair, regardless of which function you're calling.
-- Tools are the interface the model acts through — treat each one like a small public API: one clear job, an unambiguous name, a minimal, precisely-typed input schema. A vague or overloaded tool produces vague or wrong tool calls. If the calling service already knows a value definitively (e.g. which device this diagnosis is for), close over it when constructing the tool rather than asking the model to supply it — see `createGetHistoricalBaselineTool(dbService, deviceId)`.
-- All financial/numeric estimates and pass/fail safety thresholds that get persisted or shown as fact must be computed deterministically in TypeScript, never left to the model — the model writes prose around numbers it's given, not numbers of its own.
+- **A tool only earns a `tools` slot if the model must actually decide something.** If a function takes no arguments, or its only argument is already known deterministically before the call (e.g. an anomaly kind classified in TypeScript before the model ever runs), fetch it directly and hand the result to the model as prompt context — don't offer it as a tool call the model can choose to skip. `diagnostics.service.ts` originally wrapped `getHistoricalBaseline`/`getHardwareManual` as AI SDK tools inside a `generateText()` + tool-calling loop; a free/small model reliably skipped calling them anyway and wrote a summary that read as if it had, while the confidence scoring correctly (but only after the fact) caught that 0 tools were used. The fix was to stop offering a "choice" that wasn't real — both are now plain function calls made before the prompt is built, and the whole thing collapsed from up to three model round-trips to one.
+- **No tool calls needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema. This is `diagnostics.service.ts`'s current shape, for the reason above.
+- **Tool calls genuinely needed → `generateText()` with `tools`, never `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. Reach for this only when the model is choosing between real options for an open-ended problem, bounded by `stopWhen: stepCountIs(n)` — not as a default way to hand the model extra context it has no actual choice about.
+- **A tool-calling loop that must end in a structured decision → pass `output: Output.object({ schema })` to `generateText()`, read `result.output`.** This is the SDK's native mechanism for "investigate freely via `tools`, then bind the final answer to a schema" — the model stops calling tools when it's ready, and the SDK validates that final response against `schema` instead of returning plain text. Accessing `result.output` throws `NoOutputGeneratedError` if the model never converges within `stopWhen`'s step limit — catch that specifically for a clear error, don't let it surface as an opaque failure. Never regex-extract a fenced JSON block from a `generateText()` response and hand-repair likely-malformed output — `Output.object()`'s validated result never needs parsing or repair, regardless of which function you're calling.
+- Tools are the interface the model acts through — treat each one like a small public API: one clear job, an unambiguous name, a minimal, precisely-typed input schema. A vague or overloaded tool produces vague or wrong tool calls. If the calling service already knows a value definitively (e.g. which device this diagnosis is for), close over it when constructing the tool rather than asking the model to supply it.
+- All financial/numeric estimates, confidence/trust scores, and pass/fail safety thresholds that get persisted or shown as fact must be computed deterministically in TypeScript from real signals, never left to the model — the model writes prose around numbers it's given, not numbers of its own. See `diagnostic-confidence.ts`.
 - Any model output that would trigger a real-world consequence (a dispatch, an approval, an irreversible write) is a human-in-the-loop checkpoint — persist it in a pending/awaiting-approval state and require an explicit human action before anything downstream acts on it. Never auto-execute off a raw model response. The status field is always set deterministically by the service (`'PENDING_APPROVAL'`), never taken from the model's output — see `diagnosisProposalSchema`'s `.pick()` explicitly excluding `status`.
 - An autonomous, non-request-triggered AI call (a queue consumer, a cron job — anything not acting on behalf of a specific logged-in user) resolves the model via `DEFAULT_MODEL_KEY` with no BYOK override — there's no per-user key to use when nobody made the request.
 - A failed AI call triggered from a queue job is typically a decorative-call failure (per the resilience convention above), not a required one — swallow it at the trigger boundary rather than letting the whole job fail and retry, *especially* if the job also does a non-idempotent write (a duplicate DB insert on retry is worse than a missing diagnosis) — see `AiDiagnosticTriggerService`.
