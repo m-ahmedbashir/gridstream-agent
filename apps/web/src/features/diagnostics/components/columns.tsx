@@ -3,6 +3,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import type { FaultDiagnosticWithDevice } from '@gridstream/shared';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DiagnosticActions } from './diagnostic-actions';
 
 const SEVERITY_VARIANT: Record<FaultDiagnosticWithDevice['severity'], 'outline' | 'secondary' | 'destructive'> = {
@@ -35,7 +36,17 @@ export const columns: ColumnDef<FaultDiagnosticWithDevice>[] = [
   {
     accessorKey: 'summary',
     header: 'SUMMARY',
-    cell: ({ row }) => <div className='max-w-md truncate'>{row.original.summary}</div>,
+    // Truncated for consistent row height (a table's job is scanning many
+    // rows at once), but the full text is one hover away rather than lost —
+    // clicking the row also reaches it in full on the detail page.
+    cell: ({ row }) => (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className='max-w-md truncate'>{row.original.summary}</div>
+        </TooltipTrigger>
+        <TooltipContent className='max-w-sm'>{row.original.summary}</TooltipContent>
+      </Tooltip>
+    ),
   },
   {
     accessorKey: 'requiresImmediateDispatch',

@@ -1326,6 +1326,65 @@ The last stage on the original master plan. No new features — this pass finds 
 
 ### Still pending
 
-- No live database/Redis/Clerk credentials in this environment, same ceiling as every stage before this one — nothing here changes that.
+- No live database/Redis/Clerk credentials in this environment, same ceiling as every stage before this one — nothing here changes that. **Update, same day:** this changed — see the two dated entries below, where live `DATABASE_URL`, `REDIS_URL`, and `CLERK_SECRET_KEY` all landed and got verified end to end for the first time.
 - The "What's not built yet" items in `README.md` (telemetry charts, device-detail view, severity-based auto-triage, broader backend authorization, frontend test coverage) are genuine open work, not blockers — they were never in scope for any of the 7 stages on the original master plan.
 - All 7 stages of the original master plan are now done. Future work is genuinely new scope, not a pending stage.
+
+---
+
+## 2026-08-15 — Live infrastructure: real Postgres, Clerk, and Redis for the first time
+
+Every verification in this file up to this point used deliberately-fake credentials (an unreachable `DATABASE_URL`, no `CLERK_SECRET_KEY`/`REDIS_URL` at all) — genuinely useful for catching DI/ESM/boot-order bugs, but it meant nothing in this project had ever actually run against live infrastructure. That changed this session: a real Neon `DATABASE_URL`, real Clerk test-instance keys, and a real Upstash `REDIS_URL` were added to `apps/api/.env` / `apps/web/.env`, and each was verified working directly rather than assumed.
+
+### What changed
+
+- **`pnpm db:migrate`** applied the existing migration to the real database — first successful live migration this project has had.
+- **`pnpm db:seed`** — failed on the first real attempt (`ECONNREFUSED`), surfacing a genuine, previously-latent bug: `scripts/seed-devices.ts` is a standalone script outside Nest's DI container, so it never went through `ConfigModule.forRoot()` (the thing that auto-loads `.env` for the real app) — `process.env.DATABASE_URL` was silently `undefined`, and `pg.Pool` fell back to connecting to `localhost:5432`. Fixed by switching the script's invocation to Node's native `--env-file=.env` flag (Node ≥22 already required here, so no new dependency) combined with the `-r ts-node/register` pattern `test:debug` already used elsewhere in this file. Re-ran clean — 4 demo devices seeded and confirmed via a direct query.
+- **`BYOK_ENCRYPTION_KEY`** was still the literal placeholder text in `apps/api/.env`, not a real key — generated a real one (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")`, safe to do since no BYOK key had ever been saved against the placeholder.
+- **`apps/web/.env`** didn't exist yet — created from `env.example.txt` with the real Clerk keys filled in. Along the way, found and fixed a second stale doc bug: `env.example.txt` said `GROQ_API_KEY` was required for chat responses, left over from before the ai-config migration moved the chat route onto `DEFAULT_MODEL_KEY` (currently OpenRouter) — corrected to `OPENROUTER_API_KEY`, reusing the same key already in `apps/api/.env` (same personal account).
+- **`REDIS_URL`** — Upstash requires TLS; the value had to use the `rediss://` scheme (not `redis://`), which `ioredis` auto-detects and enables TLS for automatically. Verified directly with a throwaway PING/SET/GET script before trusting it.
+- **Live verification, not assumption, for every piece**: booted the compiled backend against the real `DATABASE_URL` — `✅ Database connection verified`, all routes mapped. Hit `GET /devices` with no token and with a garbage token — both correctly `401`, proving `ClerkAuthGuard`'s `verifyToken()` is genuinely round-tripping to Clerk's real API, not a stub. Started the frontend dev server with the real Clerk keys and confirmed `/dashboard/*` is now actually gated (`x-clerk-auth-status: signed-out`, real redirects) — a real behavior change from the earlier keyless-mode test, where every dashboard route returned `200` with no protection at all.
+
+### Verification
+
+- `pnpm typecheck` / `pnpm test` / `pnpm build` — unaffected (env/script changes only, confirmed via the fixed `db:seed` script's real run).
+- Direct Postgres query confirmed all 4 seeded devices genuinely persisted.
+- Direct Redis PING/SET/GET round-trip confirmed the Upstash connection works.
+- `curl` against the real running backend confirmed `ClerkAuthGuard` correctly rejects missing/invalid tokens with `401`.
+
+---
+
+## 2026-08-15 — Simulate Chaos Event, per-alert telemetry chart, and a detail page
+
+Two related asks: a demo control to trigger the ingestion → diagnosis → approval loop on demand (rather than waiting on the automatic simulator's 1-in-10 chance per tick), and a way to actually show *why* an alert fired — a telemetry chart, behind a per-alert detail page since "we're going to add some more things in there as well."
+
+### Simulate Chaos Event
+
+- **`generateReading()`** (`telemetry-reading-generator.ts`) gained a `forceAnomaly` parameter — skips the probability roll and always applies the anomaly branch. Explicitly confirmed with the user that this does *not* mean inserting a boolean flag anywhere: `isAnomalous()` only ever reads real sensor values (`batteryTempCelsius > 65`, `gridVoltage < 200`) — `forceAnomaly` is purely an internal control deciding whether `generateReading()` computes a genuine extreme number (e.g. `batteryTempCelsius: 78.3`) instead of a normal one. That real number is what lands in `telemetry_logs`, identical in shape to any organic anomaly.
+- **`TelemetrySimulatorService.simulateChaosEvent()`** — new public method: picks a random device, forces an anomalous reading, enqueues it through the exact same BullMQ queue the automatic timer uses. Works regardless of `TELEMETRY_SIMULATOR_ENABLED` (that flag only gates the automatic background loop, not this explicit action).
+- **New `TelemetryIngestionController`** (`POST /telemetry/simulate-chaos`, `ClerkAuthGuard`) — this module's first HTTP surface; previously producer/consumer-only.
+- **Frontend**: `useSimulateChaosEventMutation()` + a `ChaosEventButton` in the Active Alerts page header (`pageHeaderAction`). The mutation resolves as soon as the job is *enqueued*, not once the agent finishes (that takes real LLM-call time) — a delayed `invalidateQueries` (6s) makes the resulting alert show up promptly instead of waiting on the normal 15s poll.
+- **Live end-to-end proof, not just unit tests**: enqueued a real forced-anomaly job directly onto the live Redis queue while the compiled backend (with real DB/Redis/Clerk) was running, and watched it flow through the real consumer → real anomaly detection → a real `generateText()` call against the free OpenRouter model → a real `FaultDiagnostic` row. Took ~71 seconds (free-tier model latency, consistent with this file's own earlier note about free OpenRouter models being slow) but completed correctly: `status: PENDING_APPROVAL`, `approvedAt`/`approvedBy` both `null`, a coherent AI-written summary referencing the actual injected values. **This is the first real, live, end-to-end AI-generated diagnosis this project has ever produced** — left in the database as a genuine example alert rather than cleaned up.
+
+### Historical telemetry seed
+
+- **New `scripts/seed-telemetry-history.ts`** (`pnpm db:seed:history`) — backfills ~24h of plausible telemetry per device (one reading every 30 minutes, reusing `generateReading()` for realistic per-device-type values), inserted directly rather than through the queue (a bulk historical backfill isn't live ingestion, so there's no consumer/anomaly-trigger step to go through). Without this, `getHistoricalBaseline()` and the new chart both had nothing to show — every demo would cite "0 samples." Idempotent-lite: skips entirely if `telemetry_logs` already has any rows. Verified against the real database: 192 rows inserted (48 × 4 devices), correct per-device-type shape, ~8% organic anomaly rate (close to the expected 10%, left in deliberately — real 24h history isn't perfectly clean, and these don't retroactively trigger a diagnosis since they never pass through the queue consumer).
+
+### Telemetry chart + alert detail page
+
+- **Backend**: `DiagnosticsService.getDiagnosticById()` + `GET /diagnostics/:id`; `DevicesService.getDeviceTelemetryHistory()` + `GET /devices/:id/telemetry?hours=` (confirms the device exists first, so a bad ID gets a clear 404 instead of a chart that looks like "no data"). New `deviceTelemetryHistoryResponseSchema` in `packages/shared`.
+- **`components/ui/table/data-table.tsx`** gained an optional `onRowClick` prop — a small, backward-compatible addition to the shared table primitive (used by both the diagnostics and, potentially, a future devices table). `DiagnosticActions`' buttons now stop click propagation, so clicking Approve/Reject inside a row doesn't also trigger row navigation.
+- **New `TelemetryChart`** (`features/devices/components/telemetry-chart.tsx`) — an `AreaChart` (Recharts, following the existing `area-graph.tsx` shadcn-chart pattern) of the last 24h, with a `ReferenceLine` at the relevant safety threshold: battery temperature (65°C) for `BATTERY` devices, grid voltage (200V) for every other type — the same two thresholds `isAnomalous()` checks server-side, duplicated here only as display constants, not re-implemented logic.
+- **New `/dashboard/alerts/[id]` route** (`DiagnosticDetail` component) — full diagnosis (severity, fault type, summary, recommended action, device info, decided-at), the telemetry chart, and the same `DiagnosticActions` reused from the list view. Explicitly scoped as a starting point for more content later, per the request.
+- Clicking any row in the Active Alerts table now navigates to its detail page (`DataTable`'s new `onRowClick`).
+
+### Verification
+
+- `pnpm typecheck` — clean across all 4 packages. `pnpm test` — 80 tests pass (8 new: `forceAnomaly`, `simulateChaosEvent()` ×3, `getDiagnosticById()` ×2, `getDeviceTelemetryHistory()` ×2). `pnpm build` — all 4 packages succeed, `/dashboard/alerts/[id]` present in the route list.
+- Compiled backend boot against real infra — `DiagnosticsController`/`DevicesController`/`TelemetryIngestionController` all show their new routes mapped (`GET /diagnostics/:id`, `GET /devices/:id/telemetry`, `POST /telemetry/simulate-chaos`).
+- Frontend dev server against real Clerk keys — `/dashboard/alerts/[id]` for the real chaos-triggered `FaultDiagnostic` correctly 307-redirects to sign-in with the right `redirect_url` back to that exact page, identical behavior to every other `/dashboard/*` route — confirms the dynamic route is registered and gated correctly. Full authenticated rendering still can't be verified without a real browser session (no browser automation tool available this session) — stated rather than assumed.
+
+### Still pending
+
+- A dedicated device-detail page (drill in from the Devices list itself) — the chart currently only exists on the alert-detail page, reached via an alert, not via a device directly.
+- Interactive browser verification of the new chart/detail page's actual rendering — structurally verified (routes, gating, data shape) but not visually confirmed in a real browser this session.

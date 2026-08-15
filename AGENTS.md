@@ -46,11 +46,12 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       historical-baseline.tool.ts (real DB aggregate query) + tools/get-
                                       hardware-manual.tool.ts (a clearly-documented stub knowledge base — no
                                       real manufacturer data behind it, same honesty as the telemetry simulator)
-                                      + diagnostics.controller.ts (list/approve/reject — the one HTTP surface
-                                      on this module, guarded by ClerkAuthGuard; diagnose() itself is still
-                                      only triggered via DI from telemetry-ingestion, never over HTTP)
-  src/modules/devices/               devices.service.ts + devices.controller.ts — read-only device-asset
-                                      listing for the dashboard, same ClerkAuthGuard as diagnostics
+                                      + diagnostics.controller.ts (list/get-one/approve/reject — the one HTTP
+                                      surface on this module, guarded by ClerkAuthGuard; diagnose() itself is
+                                      still only triggered via DI from telemetry-ingestion, never over HTTP)
+  src/modules/devices/               devices.service.ts + devices.controller.ts — device-asset listing +
+                                      per-device telemetry history (GET /devices/:id/telemetry, powers the
+                                      alert-detail page's chart), same ClerkAuthGuard as diagnostics
   src/common/db/              db.service.ts — pg Pool + Drizzle instance, bound to the table defs in packages/shared; never define a table here
   src/common/crypto/          BYOK AES-256-GCM encryption
   src/common/auth/            clerk-auth.guard.ts (verifies a Clerk session JWT via @clerk/backend) +

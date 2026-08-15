@@ -77,16 +77,18 @@ The ingestion → diagnosis → approval pipeline behind this diagram is its own
 The full loop works end to end: a telemetry anomaly triggers the diagnostic agent, the agent produces a `FaultDiagnostic` sitting at `PENDING_APPROVAL`, and an operator can see it in the dashboard and approve or reject it.
 
 **What's live today:**
-- Clerk authentication on the frontend; real backend session verification (`ClerkAuthGuard`, via `@clerk/backend`) on the two dashboard-facing controllers
+- Clerk authentication on the frontend; real backend session verification (`ClerkAuthGuard`, via `@clerk/backend`) on the dashboard-facing controllers
 - A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
 - A provider-agnostic AI model registry (`packages/ai-config/src/model-registry.ts`), shared by both apps — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
-- A Redis/BullMQ telemetry ingestion pipeline with a simulator (off by default) generating plausible per-device readings, including occasional injected anomalies
-- The diagnostic agent (`apps/api/src/modules/diagnostics/`) — investigates a safety-bound breach via tool calls, then emits a schema-validated `FaultDiagnostic` proposal
+- A real Redis/BullMQ telemetry ingestion pipeline, plus a simulator (off by default) generating plausible per-device readings with occasional injected anomalies — verified against a live Upstash instance, not just a mock
+- The diagnostic agent (`apps/api/src/modules/diagnostics/`) — investigates a safety-bound breach via tool calls, then emits a schema-validated `FaultDiagnostic` proposal. Verified end to end against a real LLM call, not just typechecked
 - The Active Alerts dashboard — a status-filtered queue of `FaultDiagnostic` records with Approve/Reject actions, and a Devices overview listing the fleet
+- A **Simulate Chaos Event** button (Active Alerts page) — forces a real threshold-breaching reading through the same live queue the automatic simulator uses, for demoing the whole loop on demand instead of waiting on a timer
+- A per-alert detail page (`/dashboard/alerts/[id]`) with a telemetry chart (last 24h, safety threshold drawn in) for the device that triggered it — backed by a historical-data seed script (`pnpm db:seed:history`) so the chart has real data to show, not an empty graph
 
 **What's not built yet:**
-- Telemetry charts / a device-detail view (drill into one device's history) — the Devices page is a flat list today
+- A dedicated device-detail page — clicking a device on the Devices list doesn't drill in yet; the telemetry chart currently only exists on the alert-detail page
 - Severity-based auto-triage — every diagnosis goes to `PENDING_APPROVAL` regardless of severity; there's no "auto-log a routine ticket, only escalate CRITICAL ones" branch
 - Broader backend authorization — `ClerkAuthGuard` checks for *a* valid session, not role/permission (any authenticated user can approve/reject); no Postgres RLS
 - Frontend test coverage — the backend has extensive Jest coverage, the frontend has none yet
@@ -100,7 +102,8 @@ The full loop works end to end: a telemetry anomaly triggers the diagnostic agen
 ```mermaid
 flowchart TD
     subgraph Ingestion ["1. Telemetry Ingestion"]
-        SIM["TelemetrySimulatorService<br/>(off by default)"] -->|enqueue reading| Q[("Redis / BullMQ<br/>telemetry queue")]
+        SIM["TelemetrySimulatorService<br/>(automatic, off by default)"] -->|enqueue reading| Q[("Redis / BullMQ<br/>telemetry queue")]
+        CHAOS["Simulate Chaos Event<br/>(manual, dashboard button)"] -->|enqueue forced-anomaly reading| Q
         Q --> CONSUMER["TelemetryQueueConsumer"]
         CONSUMER -->|insert| TL[("telemetry_logs")]
         CONSUMER --> THRESH{"Anomaly?<br/>(battery temp > 65°C |<br/>grid voltage < 200V)"}
@@ -117,7 +120,8 @@ flowchart TD
     subgraph HITL ["3. Human-in-the-Loop Dashboard"]
         FD --> API["DiagnosticsController<br/>(ClerkAuthGuard)"]
         API --> ALERTS["Active Alerts page<br/>(apps/web)"]
-        ALERTS --> DECISION["Operator clicks<br/>Approve / Reject"]
+        ALERTS --> DETAIL["Alert detail page<br/>+ telemetry chart<br/>(reads telemetry_logs)"]
+        DETAIL --> DECISION["Operator clicks<br/>Approve / Reject"]
         DECISION -->|atomic conditional update| FD
     end
 
@@ -193,12 +197,13 @@ gridstream-agent/
 │   ├── web/                    # Next.js frontend
 │   │   └── src/
 │   │       ├── lib/api-client.ts       # apiFetch() — the only fetch() to apps/api, attaches a Clerk bearer token
-│   │       ├── features/diagnostics/   # Active Alerts queue — hooks, columns, approve/reject actions
-│   │       ├── features/devices/       # Devices overview (read-only)
-│   │       └── app/dashboard/          # routes: overview, alerts, devices, chat, ...
+│   │       ├── features/diagnostics/   # Active Alerts queue + detail page, hooks, columns, approve/reject
+│   │       ├── features/devices/       # Devices overview, Simulate Chaos Event button, telemetry chart
+│   │       └── app/dashboard/          # routes: overview, alerts, alerts/[id], devices, chat, ...
 │   └── api/                    # NestJS backend
 │       ├── drizzle.config.ts     # drizzle-kit config
 │       ├── drizzle/              # generated SQL migrations — append-only
+│       ├── scripts/              # seed-devices.ts (pnpm db:seed), seed-telemetry-history.ts (pnpm db:seed:history)
 │       └── src/
 │           ├── common/
 │           │   ├── db/           # DbService (pg Pool + Drizzle instance, bound to packages/shared's tables)
@@ -206,9 +211,9 @@ gridstream-agent/
 │           │   └── auth/         # ClerkAuthGuard + @ClerkUserId() — verifies a Clerk session server-side
 │           └── modules/
 │               ├── users/        # Clerk-linked settings, BYOK key management
-│               ├── telemetry-ingestion/  # BullMQ producer/consumer, telemetry simulator
-│               ├── diagnostics/  # the diagnostic agent + DiagnosticsController (list/approve/reject)
-│               └── devices/      # DevicesController — read-only device-asset listing
+│               ├── telemetry-ingestion/  # BullMQ producer/consumer, simulator + POST /telemetry/simulate-chaos
+│               ├── diagnostics/  # the diagnostic agent + DiagnosticsController (list/get-one/approve/reject)
+│               └── devices/      # DevicesController — device listing + GET /devices/:id/telemetry
 ├── packages/
 │   ├── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
 │   │                              (src/db/schema.ts is the single source of truth for every table)
@@ -251,7 +256,7 @@ cd apps/api
 cp .env.example .env
 ```
 
-Set `OPENROUTER_API_KEY` (free, no card required, from [openrouter.ai](https://openrouter.ai)) and `DATABASE_URL` (your PostgreSQL connection string). `CLERK_SECRET_KEY` is required for the Active Alerts / Devices endpoints to work at all (`ClerkAuthGuard` fails closed without it) — use the same key from your Clerk dashboard as the frontend below. `FRONTEND_URL` controls CORS and defaults to the local Next.js dev server, so it's optional unless you're running the frontend on a different port.
+Set `OPENROUTER_API_KEY` (free, no card required, from [openrouter.ai](https://openrouter.ai)) and `DATABASE_URL` (your PostgreSQL connection string). `REDIS_URL` (a free instance from [Upstash](https://upstash.com) or [Railway](https://railway.app) works fine — note the `rediss://` scheme, not `redis://`, if your provider requires TLS) is needed for the telemetry queue and the Simulate Chaos Event button to do anything. `CLERK_SECRET_KEY` is required for the Active Alerts / Devices endpoints to work at all (`ClerkAuthGuard` fails closed without it) — use the same key from your Clerk dashboard as the frontend below. `FRONTEND_URL` controls CORS and defaults to the local Next.js dev server, so it's optional unless you're running the frontend on a different port.
 
 **Frontend (`apps/web/.env`, copied from `env.example.txt`):**
 
@@ -265,9 +270,11 @@ Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PU
 ### Database
 
 ```bash
-pnpm db:generate    # generate SQL migrations from packages/shared/src/db/schema.ts
-pnpm db:migrate      # apply them to DATABASE_URL
-pnpm db:seed         # seed one demo DeviceAsset per device type
+pnpm db:generate       # generate SQL migrations from packages/shared/src/db/schema.ts
+pnpm db:migrate         # apply them to DATABASE_URL
+pnpm db:seed            # seed one demo DeviceAsset per device type
+pnpm db:seed:history    # backfill ~24h of telemetry history per device (skips if telemetry_logs already has data) —
+                         # without this, the alert-detail page's chart and getHistoricalBaseline() have nothing to show
 ```
 
 ### Running Locally
