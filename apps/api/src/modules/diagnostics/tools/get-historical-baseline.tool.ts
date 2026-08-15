@@ -18,7 +18,10 @@ export interface HistoricalBaseline {
  * Pure(ish) query function — no NestJS DI, just a DbService instance — so
  * it's testable with a mocked DbService without touching the AI SDK or Nest.
  */
-export async function queryHistoricalBaseline(dbService: DbService, deviceId: string): Promise<HistoricalBaseline> {
+export async function queryHistoricalBaseline(
+  dbService: DbService,
+  deviceId: string,
+): Promise<HistoricalBaseline> {
   const since = new Date(Date.now() - ONE_DAY_MS);
 
   const [row] = await dbService.db
@@ -30,14 +33,27 @@ export async function queryHistoricalBaseline(dbService: DbService, deviceId: st
       avgGridVoltage: avg(telemetryLogs.gridVoltage),
     })
     .from(telemetryLogs)
-    .where(and(eq(telemetryLogs.deviceId, deviceId), gte(telemetryLogs.timestamp, since)));
+    .where(
+      and(
+        eq(telemetryLogs.deviceId, deviceId),
+        gte(telemetryLogs.timestamp, since),
+      ),
+    );
 
   return {
     sampleCount: Number(row?.sampleCount ?? 0),
-    avgSolarProductionKwh: row?.avgSolarProductionKwh != null ? Number(row.avgSolarProductionKwh) : null,
-    avgBatterySoC: row?.avgBatterySoC != null ? Number(row.avgBatterySoC) : null,
-    avgBatteryTempCelsius: row?.avgBatteryTempCelsius != null ? Number(row.avgBatteryTempCelsius) : null,
-    avgGridVoltage: row?.avgGridVoltage != null ? Number(row.avgGridVoltage) : null,
+    avgSolarProductionKwh:
+      row?.avgSolarProductionKwh != null
+        ? Number(row.avgSolarProductionKwh)
+        : null,
+    avgBatterySoC:
+      row?.avgBatterySoC != null ? Number(row.avgBatterySoC) : null,
+    avgBatteryTempCelsius:
+      row?.avgBatteryTempCelsius != null
+        ? Number(row.avgBatteryTempCelsius)
+        : null,
+    avgGridVoltage:
+      row?.avgGridVoltage != null ? Number(row.avgGridVoltage) : null,
   };
 }
 
@@ -57,11 +73,14 @@ export async function queryHistoricalBaseline(dbService: DbService, deviceId: st
  * (confirmed here first by `pnpm test` itself failing this exact way before
  * a compiled boot was even attempted).
  */
-export async function createGetHistoricalBaselineTool(dbService: DbService, deviceId: string): Promise<Tool<Record<string, never>, HistoricalBaseline>> {
+export async function createGetHistoricalBaselineTool(
+  dbService: DbService,
+  deviceId: string,
+): Promise<Tool<Record<string, never>, HistoricalBaseline>> {
   const { tool } = await import('ai');
   return tool({
     description:
-      'Returns this device\'s 24-hour rolling average telemetry (solar production, battery state of charge, battery temperature, grid voltage) so the triggering reading can be compared against its own recent normal behavior, not just the fixed safety thresholds.',
+      "Returns this device's 24-hour rolling average telemetry (solar production, battery state of charge, battery temperature, grid voltage) so the triggering reading can be compared against its own recent normal behavior, not just the fixed safety thresholds.",
     inputSchema: z.object({}),
     execute: async () => queryHistoricalBaseline(dbService, deviceId),
   });

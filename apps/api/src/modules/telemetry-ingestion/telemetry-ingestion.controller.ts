@@ -5,7 +5,9 @@ import { TelemetrySimulatorService } from './telemetry-simulator.service';
 @Controller('telemetry')
 @UseGuards(ClerkAuthGuard)
 export class TelemetryIngestionController {
-  constructor(private readonly telemetrySimulatorService: TelemetrySimulatorService) {}
+  constructor(
+    private readonly telemetrySimulatorService: TelemetrySimulatorService,
+  ) {}
 
   /**
    * The "Simulate Chaos Event" dashboard button — an on-demand version of

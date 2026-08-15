@@ -9,8 +9,16 @@ import { AiDiagnosticTriggerService } from './ai-diagnostic-trigger.service';
 import { TELEMETRY_QUEUE } from './telemetry-ingestion.constants';
 
 @Module({
-  imports: [DbModule, DiagnosticsModule, BullModule.registerQueue({ name: TELEMETRY_QUEUE })],
+  imports: [
+    DbModule,
+    DiagnosticsModule,
+    BullModule.registerQueue({ name: TELEMETRY_QUEUE }),
+  ],
   controllers: [TelemetryIngestionController],
-  providers: [TelemetrySimulatorService, TelemetryQueueConsumer, AiDiagnosticTriggerService],
+  providers: [
+    TelemetrySimulatorService,
+    TelemetryQueueConsumer,
+    AiDiagnosticTriggerService,
+  ],
 })
 export class TelemetryIngestionModule {}

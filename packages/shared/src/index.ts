@@ -18,3 +18,4 @@ export interface ApiResponse<T = unknown> {
 export * from './db/schema';
 export * from './schemas/diagnostics.schema';
 export * from './schemas/devices.schema';
+export * from './schemas/diagnostic-trace.schema';

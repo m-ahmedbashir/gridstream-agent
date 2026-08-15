@@ -54,7 +54,10 @@ export function generateReading(
   if (isAnomaly) {
     if (device.deviceType === 'BATTERY') {
       // Thermal runaway: push well past the 65°C threshold.
-      reading.batteryTempCelsius = roundTo(THERMAL_RUNAWAY_TEMP_C + random() * 15, 1);
+      reading.batteryTempCelsius = roundTo(
+        THERMAL_RUNAWAY_TEMP_C + random() * 15,
+        1,
+      );
     } else {
       // Voltage sag: only device types without a battery get this anomaly —
       // keeps each simulated reading to one clear anomaly kind, not both.

@@ -1,4 +1,11 @@
-import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { ClerkAuthGuard } from '../../common/auth/clerk-auth.guard';
 import { DevicesService } from './devices.service';

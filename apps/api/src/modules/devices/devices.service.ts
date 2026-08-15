@@ -1,6 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, count, desc, eq, gte } from 'drizzle-orm';
-import { deviceAssets, telemetryLogs, type DeviceAsset, type TelemetryLog } from '@gridstream/shared';
+import {
+  deviceAssets,
+  telemetryLogs,
+  type DeviceAsset,
+  type TelemetryLog,
+} from '@gridstream/shared';
 import { DbService } from '../../common/db/db.service';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -19,7 +24,10 @@ export class DevicesService {
     const conditions = [
       status ? eq(deviceAssets.status, status) : undefined,
       deviceType ? eq(deviceAssets.deviceType, deviceType) : undefined,
-    ].filter((condition): condition is NonNullable<typeof condition> => condition !== undefined);
+    ].filter(
+      (condition): condition is NonNullable<typeof condition> =>
+        condition !== undefined,
+    );
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [items, [totalRow]] = await Promise.all([
@@ -30,7 +38,10 @@ export class DevicesService {
         .orderBy(desc(deviceAssets.createdAt))
         .limit(limit)
         .offset(offset),
-      this.dbService.db.select({ total: count() }).from(deviceAssets).where(whereClause),
+      this.dbService.db
+        .select({ total: count() })
+        .from(deviceAssets)
+        .where(whereClause),
     ]);
 
     return { items, total: Number(totalRow?.total ?? 0) };
@@ -42,8 +53,14 @@ export class DevicesService {
    * device exists first so a bad ID gets a clear 404 instead of an empty
    * chart that looks like "no data."
    */
-  async getDeviceTelemetryHistory(deviceId: string, hours: number): Promise<{ items: TelemetryLog[] }> {
-    const [device] = await this.dbService.db.select().from(deviceAssets).where(eq(deviceAssets.id, deviceId));
+  async getDeviceTelemetryHistory(
+    deviceId: string,
+    hours: number,
+  ): Promise<{ items: TelemetryLog[] }> {
+    const [device] = await this.dbService.db
+      .select()
+      .from(deviceAssets)
+      .where(eq(deviceAssets.id, deviceId));
     if (!device) {
       throw new NotFoundException(`DeviceAsset ${deviceId} not found`);
     }
@@ -52,7 +69,12 @@ export class DevicesService {
     const items = await this.dbService.db
       .select()
       .from(telemetryLogs)
-      .where(and(eq(telemetryLogs.deviceId, deviceId), gte(telemetryLogs.timestamp, since)))
+      .where(
+        and(
+          eq(telemetryLogs.deviceId, deviceId),
+          gte(telemetryLogs.timestamp, since),
+        ),
+      )
       .orderBy(asc(telemetryLogs.timestamp));
 
     return { items };

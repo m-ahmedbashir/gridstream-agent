@@ -49,6 +49,10 @@ apps/api/                  NestJS backend (deployed to Railway)
                                       + diagnostics.controller.ts (list/get-one/approve/reject — the one HTTP
                                       surface on this module, guarded by ClerkAuthGuard; diagnose() itself is
                                       still only triggered via DI from telemetry-ingestion, never over HTTP)
+                                      + diagnostic-confidence.ts (pure function — deterministic confidence
+                                      scoring from real signals captured off the AI SDK's own tool-call trace;
+                                      faultType and confidenceScore/Label/Factors are never model-authored, see
+                                      "Building an AI feature" below for why)
   src/modules/devices/               devices.service.ts + devices.controller.ts — device-asset listing +
                                       per-device telemetry history (GET /devices/:id/telemetry, powers the
                                       alert-detail page's chart), same ClerkAuthGuard as diagnostics

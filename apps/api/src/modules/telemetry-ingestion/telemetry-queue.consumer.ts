@@ -4,7 +4,7 @@ import type { Job } from 'bullmq';
 import { telemetryLogInsertSchema, telemetryLogs } from '@gridstream/shared';
 import { DbService } from '../../common/db/db.service';
 import { AiDiagnosticTriggerService } from './ai-diagnostic-trigger.service';
-import { isAnomalous } from './telemetry-thresholds';
+import { classifyAnomaly } from './telemetry-thresholds';
 import { TELEMETRY_QUEUE } from './telemetry-ingestion.constants';
 
 /**
@@ -32,11 +32,21 @@ export class TelemetryQueueConsumer extends WorkerHost {
     // `timestamp` back into a real Date (see packages/shared/src/db/schema.ts).
     const reading = telemetryLogInsertSchema.parse(job.data);
 
-    const [inserted] = await this.dbService.db.insert(telemetryLogs).values(reading).returning();
+    const [inserted] = await this.dbService.db
+      .insert(telemetryLogs)
+      .values(reading)
+      .returning();
 
-    if (isAnomalous(reading)) {
-      this.logger.warn(`Anomaly detected for device ${reading.deviceId} (job ${job.id})`);
-      await this.aiDiagnosticTrigger.trigger(reading.deviceId, inserted);
+    const anomalyKind = classifyAnomaly(reading);
+    if (anomalyKind) {
+      this.logger.warn(
+        `Anomaly detected for device ${reading.deviceId} (job ${job.id}): ${anomalyKind}`,
+      );
+      await this.aiDiagnosticTrigger.trigger(
+        reading.deviceId,
+        inserted,
+        anomalyKind,
+      );
     }
   }
 }

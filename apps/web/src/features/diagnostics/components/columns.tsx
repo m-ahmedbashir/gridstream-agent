@@ -13,11 +13,47 @@ const SEVERITY_VARIANT: Record<FaultDiagnosticWithDevice['severity'], 'outline' 
   CRITICAL: 'destructive',
 };
 
+// LOW is flagged with the same visual weight as a problem, not a pass — a
+// low-confidence diagnosis is exactly the case where a human operator's
+// scrutiny matters most, so it shouldn't read as reassuring.
+export const CONFIDENCE_VARIANT: Record<'LOW' | 'MEDIUM' | 'HIGH', 'destructive' | 'secondary' | 'outline'> = {
+  LOW: 'destructive',
+  MEDIUM: 'secondary',
+  HIGH: 'outline',
+};
+
+export const ANOMALY_KIND_LABEL: Record<FaultDiagnosticWithDevice['faultType'], string> = {
+  THERMAL_RUNAWAY: 'Thermal Runaway',
+  VOLTAGE_SAG: 'Voltage Sag',
+};
+
 export const columns: ColumnDef<FaultDiagnosticWithDevice>[] = [
   {
     accessorKey: 'severity',
     header: 'SEVERITY',
     cell: ({ row }) => <Badge variant={SEVERITY_VARIANT[row.original.severity]}>{row.original.severity}</Badge>,
+  },
+  {
+    accessorKey: 'confidenceLabel',
+    header: 'CONFIDENCE',
+    // Deterministically computed (see apps/api's diagnostic-confidence.ts),
+    // never model-reported — null means this row predates confidence
+    // scoring, not a real "no confidence" result, so it renders as a plain
+    // dash rather than a fabricated badge.
+    cell: ({ row }) => {
+      const { confidenceLabel, confidenceScore } = row.original;
+      if (confidenceLabel == null) {
+        return <span className='text-muted-foreground text-xs'>—</span>;
+      }
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant={CONFIDENCE_VARIANT[confidenceLabel]}>{confidenceLabel}</Badge>
+          </TooltipTrigger>
+          <TooltipContent>{confidenceScore}/100</TooltipContent>
+        </Tooltip>
+      );
+    },
   },
   {
     id: 'device',
@@ -32,6 +68,7 @@ export const columns: ColumnDef<FaultDiagnosticWithDevice>[] = [
   {
     accessorKey: 'faultType',
     header: 'FAULT TYPE',
+    cell: ({ row }) => ANOMALY_KIND_LABEL[row.original.faultType],
   },
   {
     accessorKey: 'summary',

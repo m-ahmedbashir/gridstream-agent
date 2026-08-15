@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { verifyToken } from '@clerk/backend';
 import type { Request } from 'express';
 
@@ -18,12 +23,18 @@ export class ClerkAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const secretKey = process.env.CLERK_SECRET_KEY;
     if (!secretKey) {
-      throw new Error('CLERK_SECRET_KEY is not configured — cannot verify any request.');
+      throw new Error(
+        'CLERK_SECRET_KEY is not configured — cannot verify any request.',
+      );
     }
 
-    const request = context.switchToHttp().getRequest<Request & { clerkUserId?: string }>();
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { clerkUserId?: string }>();
     const authHeader = request.headers['authorization'];
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : undefined;
+    const token = authHeader?.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length)
+      : undefined;
     if (!token) {
       throw new UnauthorizedException('Missing bearer token');
     }

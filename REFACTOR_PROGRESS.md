@@ -1388,3 +1388,41 @@ Two related asks: a demo control to trigger the ingestion → diagnosis → appr
 
 - A dedicated device-detail page (drill in from the Devices list itself) — the chart currently only exists on the alert-detail page, reached via an alert, not via a device directly.
 - Interactive browser verification of the new chart/detail page's actual rendering — structurally verified (routes, gating, data shape) but not visually confirmed in a real browser this session.
+
+---
+
+## 2026-08-15 — Deterministic confidence scoring, citations, and a persisted execution trace for diagnostics
+
+The diagnostic agent's output was a plain assertion with no way for a human to see why it concluded what it did or how much to trust it. Explicit requirement going in: the confidence score must **not** be the model self-reporting its own certainty ("an AI can also make the score on his own high we don't want that") — the whole flow needed to stay deterministic and traceable. AGENTS.md already states the governing rule for this class of problem (numeric facts shown to a human must be computed deterministically, never left to the model) — this work is that rule applied to a new signal.
+
+### `faultType` is no longer model-authored
+
+- **`classifyAnomaly()`** (`telemetry-thresholds.ts`) — new function returning *which* safety threshold tripped (`'THERMAL_RUNAWAY' | 'VOLTAGE_SAG' | null`), not just whether one did. `isAnomalous()` is now defined in terms of it (`classifyAnomaly(reading) !== null`) so the two can never disagree. Threaded through `telemetry-queue.consumer.ts` → `AiDiagnosticTriggerService.trigger()` → `DiagnosticsService.diagnose()` as a new required `anomalyKind` parameter — the classification is known before the agent ever runs, so it's handed to the model as a stated fact in the prompt, not asked as a question. `diagnosisProposalSchema`'s `.pick()` dropped `faultType` entirely.
+- **`packages/shared/src/db/schema.ts`**: `faultType` changed from free `text()` to a real `pgEnum` (`anomaly_kind`), single-sourced from the same two values `classifyAnomaly()` produces — replaces what was previously a locally-duplicated enum inside `get-hardware-manual.tool.ts`.
+
+### Deterministic confidence scoring, never model-reported
+
+- **New `diagnostic-confidence.ts`** (`apps/api/src/modules/diagnostics/`) — pure function, no DI, same sibling-file shape as `telemetry-thresholds.ts`. Computes a 0-100 score from four real signals captured off the AI SDK's actual `result.steps` tool-call trace for that run (not re-queried, not asked of the model): deviation strength (35 pts, how far past the fixed safety threshold), baseline corroboration (25 pts, how many historical samples backed the comparison), manufacturer-guidance corroboration (20 pts, real entry vs. generic fallback), investigation completeness (20 pts, how much of the tool budget was actually used). Labels `LOW`/`MEDIUM`/`HIGH` at fixed thresholds (45/75) chosen so no single signal can force `HIGH` alone. Degrades to a valid low score (never throws/NaNs) when the model skipped calling one or both tools within its step budget.
+- **`get-hardware-manual.tool.ts`**: `lookupHardwareManual()` now returns `{ guidance, matched }` instead of a bare string — `matched` (real entry vs. fallback) is a confidence signal, recovered by `DiagnosticsService` after the call by re-deriving it from the tool call's actual recorded input, not surfaced to the model (the tool's contract with the model is unchanged, still just the guidance text).
+- **`DiagnosticsService.diagnose()`**: after `generateText()` resolves, flattens `result.steps.flatMap(s => s.toolResults)` into the real, ground-truth tool-call trace, computes confidence from it, and persists both — `confidenceScore`/`confidenceLabel`/`confidenceFactors` (the per-signal breakdown, for the "why") plus `executionTrace` (the raw tool calls/results, for full inspection). All four columns nullable, no default — the one pre-existing live `FaultDiagnostic` row (from the earlier chaos-event test) genuinely has none of this data and shows it honestly as absent rather than a fabricated backfill.
+
+### Frontend
+
+- **`columns.tsx`**: new CONFIDENCE column (badge + score tooltip) right after severity; a legacy null-confidence row renders a plain `—`. `faultType` now renders through a small label map (`Thermal Runaway`/`Voltage Sag`) since it's a real enum now.
+- **`diagnostic-detail.tsx`**: a "why this confidence score" factor breakdown, and a collapsible raw execution-trace viewer (reusing the already-present, previously-unused `Accordion` shadcn primitive) — both rendered as plain text, never `dangerouslySetInnerHTML`, per AGENTS.md's rendering rule.
+
+### Migration — first schema change against a database with live data
+
+Every schema change up to this point regenerated `drizzle/0000_*.sql` from scratch, since nothing had ever been applied to a live database. That's no longer true (the 2026-08-15 chaos-event entry above put a real row in `fault_diagnostics`) — this is the first incremental migration (`drizzle/0001_narrow_changeling.sql`). Verified by reading the generated SQL directly before considering it safe: the `fault_type` text→enum change is an in-place `ALTER COLUMN ... SET DATA TYPE "anomaly_kind" USING "fault_type"::"anomaly_kind"` cast (not a drop/recreate) — safe because the one live row's value (`"VOLTAGE_SAG"`) already exactly matches an enum member. The four new confidence/trace columns are plain nullable `ADD COLUMN` statements with no default, so they don't touch the existing row's other values at all.
+
+### Verification
+
+- `pnpm typecheck` / `pnpm test` (101 passed, 14 new: `diagnostic-confidence.spec.ts` full suite, `classifyAnomaly()` cases, updated `diagnostics.service.spec.ts`/`get-hardware-manual.tool.spec.ts`/`telemetry-queue.consumer.spec.ts`/`ai-diagnostic-trigger.service.spec.ts`) / `pnpm build` — all clean across all 4 packages.
+- `pnpm db:generate` run and the generated SQL read directly to confirm the safe cast, per above — **`pnpm db:migrate` deliberately not yet run against the live database**, pending explicit confirmation (the one genuinely irreversible-if-wrong step in this change).
+- A `git stash`/`stash pop` mishap mid-session (testing lint against a clean checkout) briefly reverted several files in the working tree; caught via a content-level check (grepping for expected new code) rather than trusting `git status` alone, and fully recovered by restoring each affected file's content directly from the stash. Worth remembering: `git stash` without `-u` doesn't touch untracked files, which can make a partial revert look worse or better than it is at a glance — verify actual file contents, not just `git status`, when something about a stash operation looks off.
+
+### Still pending
+
+- `pnpm db:migrate` against the live Neon database.
+- A live end-to-end smoke test (`POST /telemetry/simulate-chaos`) confirming a newly-created `FaultDiagnostic` has real, non-null confidence/trace data — can only run after the migration is applied.
+- Interactive browser verification of the new confidence badge/factor-breakdown/execution-trace UI — structurally verified (typecheck/build) but not visually confirmed in a real browser this session.

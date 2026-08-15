@@ -2,99 +2,125 @@ import { DevicesService } from './devices.service';
 import { DbService } from '../../common/db/db.service';
 
 function makeDbMock(items: Record<string, unknown>[], total: number) {
-    const offsetMock = jest.fn().mockResolvedValue(items);
-    const limitMock = jest.fn().mockReturnValue({ offset: offsetMock });
-    const orderByMock = jest.fn().mockReturnValue({ limit: limitMock });
-    const selectWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
-    const selectFromMock = jest.fn().mockReturnValue({ where: selectWhereMock });
+  const offsetMock = jest.fn().mockResolvedValue(items);
+  const limitMock = jest.fn().mockReturnValue({ offset: offsetMock });
+  const orderByMock = jest.fn().mockReturnValue({ limit: limitMock });
+  const selectWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
+  const selectFromMock = jest.fn().mockReturnValue({ where: selectWhereMock });
 
-    const countWhereMock = jest.fn().mockResolvedValue([{ total: String(total) }]);
-    const countFromMock = jest.fn().mockReturnValue({ where: countWhereMock });
+  const countWhereMock = jest
+    .fn()
+    .mockResolvedValue([{ total: String(total) }]);
+  const countFromMock = jest.fn().mockReturnValue({ where: countWhereMock });
 
-    const selectMock = jest.fn((columns?: unknown) => {
-        // db.select() (no args) → the items query; db.select({ total: count() }) → the count query.
-        return columns ? { from: countFromMock } : { from: selectFromMock };
-    });
+  const selectMock = jest.fn((columns?: unknown) => {
+    // db.select() (no args) → the items query; db.select({ total: count() }) → the count query.
+    return columns ? { from: countFromMock } : { from: selectFromMock };
+  });
 
-    const dbService = { db: { select: selectMock } } as unknown as DbService;
-    return { dbService, selectWhereMock, orderByMock };
+  const dbService = { db: { select: selectMock } } as unknown as DbService;
+  return { dbService, selectWhereMock, orderByMock };
 }
 
 const DEVICE_ROW = {
-    id: 'device-1',
-    deviceType: 'BATTERY',
-    serialNumber: 'X-1',
-    location: 'Basement',
-    status: 'ONLINE',
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  id: 'device-1',
+  deviceType: 'BATTERY',
+  serialNumber: 'X-1',
+  location: 'Basement',
+  status: 'ONLINE',
+  createdAt: new Date(),
+  updatedAt: new Date(),
 };
 
 describe('DevicesService.listDevices()', () => {
-    it('returns items and a total count coerced from Postgres\'s string count', async () => {
-        const { dbService } = makeDbMock([DEVICE_ROW], 1);
-        const service = new DevicesService(dbService);
+  it("returns items and a total count coerced from Postgres's string count", async () => {
+    const { dbService } = makeDbMock([DEVICE_ROW], 1);
+    const service = new DevicesService(dbService);
 
-        const result = await service.listDevices({ limit: 50, offset: 0 });
+    const result = await service.listDevices({ limit: 50, offset: 0 });
 
-        expect(result.items).toEqual([DEVICE_ROW]);
-        expect(result.total).toBe(1);
+    expect(result.items).toEqual([DEVICE_ROW]);
+    expect(result.total).toBe(1);
+  });
+
+  it('applies both status and deviceType filters together when both are given', async () => {
+    const { dbService, selectWhereMock } = makeDbMock([], 0);
+    const service = new DevicesService(dbService);
+
+    await service.listDevices({
+      status: 'ONLINE',
+      deviceType: 'SOLAR',
+      limit: 50,
+      offset: 0,
     });
 
-    it('applies both status and deviceType filters together when both are given', async () => {
-        const { dbService, selectWhereMock } = makeDbMock([], 0);
-        const service = new DevicesService(dbService);
+    expect(selectWhereMock).toHaveBeenCalledWith(expect.anything());
+  });
 
-        await service.listDevices({ status: 'ONLINE', deviceType: 'SOLAR', limit: 50, offset: 0 });
+  it('queries with no filter at all when neither status nor deviceType is given', async () => {
+    const { dbService, selectWhereMock } = makeDbMock([], 0);
+    const service = new DevicesService(dbService);
 
-        expect(selectWhereMock).toHaveBeenCalledWith(expect.anything());
-    });
+    await service.listDevices({ limit: 50, offset: 0 });
 
-    it('queries with no filter at all when neither status nor deviceType is given', async () => {
-        const { dbService, selectWhereMock } = makeDbMock([], 0);
-        const service = new DevicesService(dbService);
-
-        await service.listDevices({ limit: 50, offset: 0 });
-
-        expect(selectWhereMock).toHaveBeenCalledWith(undefined);
-    });
+    expect(selectWhereMock).toHaveBeenCalledWith(undefined);
+  });
 });
 
-function makeTelemetryDbMock(device: Record<string, unknown> | undefined, readings: Record<string, unknown>[]) {
-    // First db.select() call in the method: the device existence check — .from().where() resolves directly.
-    const deviceWhereMock = jest.fn().mockResolvedValue(device ? [device] : []);
-    const deviceFromMock = jest.fn().mockReturnValue({ where: deviceWhereMock });
+function makeTelemetryDbMock(
+  device: Record<string, unknown> | undefined,
+  readings: Record<string, unknown>[],
+) {
+  // First db.select() call in the method: the device existence check — .from().where() resolves directly.
+  const deviceWhereMock = jest.fn().mockResolvedValue(device ? [device] : []);
+  const deviceFromMock = jest.fn().mockReturnValue({ where: deviceWhereMock });
 
-    // Second db.select() call: the telemetry query — .from().where().orderBy() resolves.
-    const orderByMock = jest.fn().mockResolvedValue(readings);
-    const telemetryWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
-    const telemetryFromMock = jest.fn().mockReturnValue({ where: telemetryWhereMock });
+  // Second db.select() call: the telemetry query — .from().where().orderBy() resolves.
+  const orderByMock = jest.fn().mockResolvedValue(readings);
+  const telemetryWhereMock = jest
+    .fn()
+    .mockReturnValue({ orderBy: orderByMock });
+  const telemetryFromMock = jest
+    .fn()
+    .mockReturnValue({ where: telemetryWhereMock });
 
-    const selectMock = jest
-        .fn()
-        .mockReturnValueOnce({ from: deviceFromMock })
-        .mockReturnValueOnce({ from: telemetryFromMock });
+  const selectMock = jest
+    .fn()
+    .mockReturnValueOnce({ from: deviceFromMock })
+    .mockReturnValueOnce({ from: telemetryFromMock });
 
-    const dbService = { db: { select: selectMock } } as unknown as DbService;
-    return { dbService, telemetryWhereMock };
+  const dbService = { db: { select: selectMock } } as unknown as DbService;
+  return { dbService, telemetryWhereMock };
 }
 
 describe('DevicesService.getDeviceTelemetryHistory()', () => {
-    it('returns the readings, oldest first, once the device is confirmed to exist', async () => {
-        const readings = [{ id: 'log-1', deviceId: 'device-1', timestamp: new Date(), batteryTempCelsius: 25 }];
-        const { dbService } = makeTelemetryDbMock(DEVICE_ROW, readings);
-        const service = new DevicesService(dbService);
+  it('returns the readings, oldest first, once the device is confirmed to exist', async () => {
+    const readings = [
+      {
+        id: 'log-1',
+        deviceId: 'device-1',
+        timestamp: new Date(),
+        batteryTempCelsius: 25,
+      },
+    ];
+    const { dbService } = makeTelemetryDbMock(DEVICE_ROW, readings);
+    const service = new DevicesService(dbService);
 
-        const result = await service.getDeviceTelemetryHistory('device-1', 24);
+    const result = await service.getDeviceTelemetryHistory('device-1', 24);
 
-        expect(result.items).toEqual(readings);
-    });
+    expect(result.items).toEqual(readings);
+  });
 
-    it('throws NotFoundException when the device does not exist, without querying telemetry_logs', async () => {
-        const { dbService, telemetryWhereMock } = makeTelemetryDbMock(undefined, []);
-        const service = new DevicesService(dbService);
+  it('throws NotFoundException when the device does not exist, without querying telemetry_logs', async () => {
+    const { dbService, telemetryWhereMock } = makeTelemetryDbMock(
+      undefined,
+      [],
+    );
+    const service = new DevicesService(dbService);
 
-        await expect(service.getDeviceTelemetryHistory('missing-device', 24)).rejects.toThrow('not found');
-        expect(telemetryWhereMock).not.toHaveBeenCalled();
-    });
+    await expect(
+      service.getDeviceTelemetryHistory('missing-device', 24),
+    ).rejects.toThrow('not found');
+    expect(telemetryWhereMock).not.toHaveBeenCalled();
+  });
 });

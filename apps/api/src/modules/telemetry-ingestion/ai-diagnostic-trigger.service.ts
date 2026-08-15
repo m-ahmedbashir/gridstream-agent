@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { TelemetryLog } from '@gridstream/shared';
+import type { AnomalyKind, TelemetryLog } from '@gridstream/shared';
 import { DiagnosticsService } from '../diagnostics/diagnostics.service';
 
 /**
@@ -18,9 +18,13 @@ export class AiDiagnosticTriggerService {
 
   constructor(private readonly diagnosticsService: DiagnosticsService) {}
 
-  async trigger(deviceId: string, reading: TelemetryLog): Promise<void> {
+  async trigger(
+    deviceId: string,
+    reading: TelemetryLog,
+    anomalyKind: AnomalyKind,
+  ): Promise<void> {
     try {
-      await this.diagnosticsService.diagnose(deviceId, reading);
+      await this.diagnosticsService.diagnose(deviceId, reading, anomalyKind);
     } catch (error) {
       // Swallowed deliberately, per AGENTS.md's resilience convention: the
       // telemetry reading is already persisted by the time this runs, so a

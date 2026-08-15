@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { IconArrowLeft } from '@tabler/icons-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FaultDiagnosticWithDevice } from '@gridstream/shared';
+import type { ConfidenceFactorBreakdown, FaultDiagnosticWithDevice } from '@gridstream/shared';
 import { TelemetryChart } from '@/features/devices/components/telemetry-chart';
 import { useDiagnosticQuery } from '../hooks/use-diagnostics';
+import { ANOMALY_KIND_LABEL, CONFIDENCE_VARIANT } from './columns';
 import { DiagnosticActions } from './diagnostic-actions';
 
 const SEVERITY_VARIANT: Record<FaultDiagnosticWithDevice['severity'], 'outline' | 'secondary' | 'destructive'> = {
@@ -15,6 +17,13 @@ const SEVERITY_VARIANT: Record<FaultDiagnosticWithDevice['severity'], 'outline' 
   MEDIUM: 'secondary',
   HIGH: 'destructive',
   CRITICAL: 'destructive',
+};
+
+const CONFIDENCE_FACTOR_LABEL: Record<keyof ConfidenceFactorBreakdown, string> = {
+  deviationStrength: 'Deviation strength',
+  baselineCorroboration: 'Baseline corroboration',
+  manualCorroboration: 'Manufacturer guidance',
+  investigationCompleteness: 'Investigation completeness',
 };
 
 export function DiagnosticDetail({ id }: { id: string }) {
@@ -43,8 +52,11 @@ export function DiagnosticDetail({ id }: { id: string }) {
                 <div className='flex items-center gap-2'>
                   <Badge variant={SEVERITY_VARIANT[data.severity]}>{data.severity}</Badge>
                   {data.requiresImmediateDispatch && <Badge variant='destructive'>Immediate dispatch</Badge>}
+                  {data.confidenceLabel != null && (
+                    <Badge variant={CONFIDENCE_VARIANT[data.confidenceLabel]}>{data.confidenceLabel} confidence ({data.confidenceScore}/100)</Badge>
+                  )}
                 </div>
-                <CardTitle className='text-xl'>{data.faultType}</CardTitle>
+                <CardTitle className='text-xl'>{ANOMALY_KIND_LABEL[data.faultType]}</CardTitle>
               </div>
               <DiagnosticActions diagnostic={data} />
             </CardHeader>
@@ -57,6 +69,55 @@ export function DiagnosticDetail({ id }: { id: string }) {
                 <div className='text-muted-foreground text-xs font-medium uppercase'>Recommended Action</div>
                 <p className='text-sm'>{data.recommendedAction}</p>
               </div>
+
+              {data.confidenceFactors && (
+                <div className='border-t pt-4'>
+                  <div className='text-muted-foreground mb-2 text-xs font-medium uppercase'>Why this confidence score</div>
+                  <ul className='space-y-1 text-sm'>
+                    {(Object.keys(data.confidenceFactors) as (keyof ConfidenceFactorBreakdown)[]).map((key) => {
+                      const factor = data.confidenceFactors![key];
+                      return (
+                        <li key={key} className='flex justify-between gap-4'>
+                          <span>
+                            {CONFIDENCE_FACTOR_LABEL[key]} — <span className='text-muted-foreground'>{factor.detail}</span>
+                          </span>
+                          <span className='text-muted-foreground shrink-0 tabular-nums'>
+                            {factor.points}/{factor.max}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {data.executionTrace && data.executionTrace.length > 0 && (
+                <div className='border-t pt-2'>
+                  <Accordion type='single' collapsible>
+                    <AccordionItem value='execution-trace'>
+                      <AccordionTrigger className='text-muted-foreground text-xs font-medium uppercase'>
+                        Raw execution trace ({data.executionTrace.length} tool call{data.executionTrace.length === 1 ? '' : 's'})
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className='space-y-3'>
+                          {data.executionTrace.map((step, i) => (
+                            <div key={i} className='rounded-md border p-2 text-xs'>
+                              <div className='mb-1 font-medium'>
+                                Step {step.stepNumber} — {step.toolName}
+                              </div>
+                              <div className='text-muted-foreground'>Input</div>
+                              <pre className='overflow-x-auto whitespace-pre-wrap'>{JSON.stringify(step.input, null, 2)}</pre>
+                              <div className='text-muted-foreground mt-1'>Output</div>
+                              <pre className='overflow-x-auto whitespace-pre-wrap'>{JSON.stringify(step.output, null, 2)}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </div>
+              )}
+
               <div className='grid grid-cols-2 gap-4 border-t pt-4 text-sm sm:grid-cols-4'>
                 <div>
                   <div className='text-muted-foreground text-xs'>Device</div>
