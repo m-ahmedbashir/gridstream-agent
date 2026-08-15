@@ -25,7 +25,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "ts-node scripts/seed-devices.ts"
+    "db:seed": "node --env-file=.env -r ts-node/register scripts/seed-devices.ts"
   },
   "dependencies": {
     "@clerk/backend": "^2.33.0",
