@@ -1,30 +1,30 @@
 import { DiagnosticsService } from './diagnostics.service';
 import { DbService } from '../../common/db/db.service';
 
-// A fully manual mock, not `{ ...jest.requireActual('ai'), generateText: jest.fn() }`
+// A fully manual mock, not `{ ...jest.requireActual('ai'), generateObject: jest.fn() }`
 // — `jest.requireActual('ai')` would try to actually load the real package,
 // which can't be `require()`'d at all under Jest's CJS test environment (the
 // same ESM-only-package problem documented on diagnostics.service.ts's own
-// dynamic `import('ai')`). `tool`, `stepCountIs`, and `Output.object` are
-// given inert pass-through implementations: nothing in these tests inspects
-// their output, since the thing that would normally call them (a real
-// generateText()) is mocked out entirely too.
+// dynamic `import('ai')`).
 //
-// `mockGenerateText` and `MockNoOutputGeneratedError` are declared *before*
+// `mockGenerateObject` and `MockNoObjectGeneratedError` are declared *before*
 // `jest.mock()` and referenced by the factory, rather than assigned from
 // inside it — the factory only runs lazily, the first time something
 // actually loads 'ai' (here, that's deep inside a test's `diagnose()` call,
 // well after `beforeEach` already needs a live reference to reset), so
 // relying on the factory's own execution to produce these would leave them
 // `undefined` when `beforeEach` runs.
-const mockGenerateText = jest.fn();
-class MockNoOutputGeneratedError extends Error {}
+const mockGenerateObject = jest.fn();
+class MockNoObjectGeneratedError extends Error {
+  finishReason: string;
+  constructor(message: string, finishReason = 'stop') {
+    super(message);
+    this.finishReason = finishReason;
+  }
+}
 jest.mock('ai', () => ({
-  generateText: mockGenerateText,
-  tool: (config: unknown) => config,
-  stepCountIs: (n: number) => n,
-  Output: { object: (config: unknown) => config },
-  NoOutputGeneratedError: MockNoOutputGeneratedError,
+  generateObject: mockGenerateObject,
+  NoObjectGeneratedError: MockNoObjectGeneratedError,
 }));
 
 // resolveModel() itself dynamically imports a real @ai-sdk/* provider
@@ -37,13 +37,32 @@ jest.mock('@gridstream/ai-config', () => ({
   resolveModel: jest.fn().mockResolvedValue({}),
 }));
 
+const EMPTY_BASELINE_ROW = {
+  sampleCount: 0,
+  avgSolarProductionKwh: null,
+  avgBatterySoC: null,
+  avgBatteryTempCelsius: null,
+  avgGridVoltage: null,
+};
+
+/**
+ * `dbService.db.select` now serves two distinct real queries within
+ * `diagnose()` — the device lookup (`.select()`, no columns) and
+ * `queryHistoricalBaseline()`'s aggregate query (`.select({...})`, an
+ * explicit column map) — dispatches on whether `select` was called with an
+ * argument to return the right mocked row for each.
+ */
 function makeDbMock(
   device: Record<string, unknown> | undefined,
   insertedRow: Record<string, unknown>,
+  baselineRow: Record<string, unknown> = EMPTY_BASELINE_ROW,
 ) {
-  const whereMock = jest.fn().mockResolvedValue(device ? [device] : []);
-  const fromMock = jest.fn().mockReturnValue({ where: whereMock });
-  const selectMock = jest.fn().mockReturnValue({ from: fromMock });
+  const selectMock = jest.fn().mockImplementation((columns?: unknown) => {
+    const whereMock = jest
+      .fn()
+      .mockResolvedValue(columns ? [baselineRow] : device ? [device] : []);
+    return { from: jest.fn().mockReturnValue({ where: whereMock }) };
+  });
 
   const returningMock = jest.fn().mockResolvedValue([insertedRow]);
   const valuesMock = jest.fn().mockReturnValue({ returning: returningMock });
@@ -80,7 +99,7 @@ const CONFIDENCE_FIELDS_NULL = {
 
 describe('DiagnosticsService', () => {
   beforeEach(() => {
-    mockGenerateText.mockReset();
+    mockGenerateObject.mockReset();
   });
 
   it("persists a FaultDiagnostic from the model's structured output, forcing status to PENDING_APPROVAL and faultType to the deterministic anomalyKind", async () => {
@@ -90,11 +109,7 @@ describe('DiagnosticsService', () => {
       recommendedAction: 'Dispatch a technician to inspect cooling.',
       requiresImmediateDispatch: true,
     };
-    mockGenerateText.mockResolvedValue({
-      output: proposal,
-      finishReason: 'stop',
-      steps: [],
-    });
+    mockGenerateObject.mockResolvedValue({ object: proposal });
 
     const insertedRow = {
       id: 'fault-1',
@@ -105,8 +120,8 @@ describe('DiagnosticsService', () => {
       createdAt: new Date(),
       approvedAt: null,
       approvedBy: null,
-      confidenceScore: 0,
-      confidenceLabel: 'LOW',
+      confidenceScore: 45,
+      confidenceLabel: 'MEDIUM',
       confidenceFactors: null,
       executionTrace: [],
     };
@@ -130,7 +145,7 @@ describe('DiagnosticsService', () => {
     expect(result.id).toBe('fault-1');
   });
 
-  it('computes and persists deterministic confidence + the real execution trace from a full 2-tool investigation', async () => {
+  it('computes and persists deterministic confidence + the real execution trace, both pre-fetched before the model ever runs', async () => {
     const proposal = {
       severity: 'HIGH',
       summary: 'Battery temperature exceeded safe range.',
@@ -144,28 +159,7 @@ describe('DiagnosticsService', () => {
       avgBatteryTempCelsius: 62,
       avgGridVoltage: 230,
     };
-    mockGenerateText.mockResolvedValue({
-      output: proposal,
-      finishReason: 'stop',
-      steps: [
-        {
-          stepNumber: 0,
-          toolResults: [
-            { toolName: 'getHistoricalBaseline', input: {}, output: baseline },
-          ],
-        },
-        {
-          stepNumber: 1,
-          toolResults: [
-            {
-              toolName: 'getHardwareManual',
-              input: { symptom: 'THERMAL_RUNAWAY' },
-              output: 'some guidance text',
-            },
-          ],
-        },
-      ],
-    });
+    mockGenerateObject.mockResolvedValue({ object: proposal });
 
     const insertedRow = {
       id: 'fault-1',
@@ -181,15 +175,19 @@ describe('DiagnosticsService', () => {
       confidenceFactors: null,
       executionTrace: [],
     };
-    const { dbService, valuesMock } = makeDbMock(DEVICE, insertedRow);
+    const { dbService, valuesMock } = makeDbMock(
+      DEVICE,
+      insertedRow,
+      baseline,
+    );
     const service = new DiagnosticsService(dbService);
 
     await service.diagnose('device-1', READING, 'THERMAL_RUNAWAY');
 
     // DEVICE is a BATTERY with a real THERMAL_RUNAWAY manual entry, so
-    // hardwareManualMatched re-derives to true — deviation (35, READING's
-    // 70°C is ~7.7% past 65) + baseline (25, 20 samples) + manual (20,
-    // matched) + investigation (20, both tools) = a HIGH-range score.
+    // hardwareManualMatched is true — deviation (READING's 70°C is ~7.7%
+    // past 65) + baseline (25, 20 samples) + manual (20, matched) +
+    // investigation (20, always both now) = a HIGH-range score.
     expect(valuesMock).toHaveBeenCalledWith(
       expect.objectContaining({
         confidenceScore: expect.any(Number),
@@ -211,25 +209,25 @@ describe('DiagnosticsService', () => {
             stepNumber: 1,
             toolName: 'getHardwareManual',
             input: { symptom: 'THERMAL_RUNAWAY' },
-            output: 'some guidance text',
+            output: expect.any(String),
           },
         ],
       }),
     );
   });
 
-  it('degrades to a low, non-crashing confidence score when the model calls no tools at all', async () => {
+  it('reflects thin evidence honestly in the confidence score, without crashing, even though investigation always runs', async () => {
+    // Investigation completeness can no longer be the weak signal (it's
+    // guaranteed 20/20 now) — this test proves the score still degrades
+    // sensibly when the *evidence itself* is thin: no historical samples
+    // yet for this device.
     const proposal = {
       severity: 'MEDIUM',
       summary: 'Battery temperature exceeded safe range.',
       recommendedAction: 'Monitor and re-check.',
       requiresImmediateDispatch: false,
     };
-    mockGenerateText.mockResolvedValue({
-      output: proposal,
-      finishReason: 'stop',
-      steps: [],
-    });
+    mockGenerateObject.mockResolvedValue({ object: proposal });
 
     const insertedRow = {
       id: 'fault-1',
@@ -240,12 +238,16 @@ describe('DiagnosticsService', () => {
       createdAt: new Date(),
       approvedAt: null,
       approvedBy: null,
-      confidenceScore: 4,
+      confidenceScore: 25,
       confidenceLabel: 'LOW',
       confidenceFactors: null,
       executionTrace: [],
     };
-    const { dbService, valuesMock } = makeDbMock(DEVICE, insertedRow);
+    const { dbService, valuesMock } = makeDbMock(
+      DEVICE,
+      insertedRow,
+      EMPTY_BASELINE_ROW,
+    );
     const service = new DiagnosticsService(dbService);
 
     await expect(
@@ -254,8 +256,14 @@ describe('DiagnosticsService', () => {
 
     expect(valuesMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        confidenceLabel: 'LOW',
-        executionTrace: [],
+        confidenceFactors: expect.objectContaining({
+          baselineCorroboration: expect.objectContaining({ points: 0 }),
+          investigationCompleteness: expect.objectContaining({ points: 20 }),
+        }),
+        executionTrace: expect.arrayContaining([
+          expect.objectContaining({ toolName: 'getHistoricalBaseline' }),
+          expect.objectContaining({ toolName: 'getHardwareManual' }),
+        ]),
       }),
     );
   });
@@ -267,28 +275,24 @@ describe('DiagnosticsService', () => {
     await expect(
       service.diagnose('missing-device', READING, 'THERMAL_RUNAWAY'),
     ).rejects.toThrow('missing-device');
-    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
-  it('throws a clear error if the model never produces a diagnosis within the step limit', async () => {
-    mockGenerateText.mockResolvedValue({
-      get output() {
-        throw new MockNoOutputGeneratedError('no output generated');
-      },
-      finishReason: 'stop',
-    });
+  it('throws a clear error if the model never produces a valid diagnosis', async () => {
+    mockGenerateObject.mockRejectedValue(
+      new MockNoObjectGeneratedError('no object generated', 'stop'),
+    );
     const { dbService } = makeDbMock(DEVICE, {});
     const service = new DiagnosticsService(dbService);
 
     await expect(
       service.diagnose('device-1', READING, 'THERMAL_RUNAWAY'),
-    ).rejects.toThrow(/did not produce a diagnosis/);
+    ).rejects.toThrow(/did not produce a valid diagnosis/);
   });
 
   it('rejects a structured output that fails schema validation', async () => {
-    mockGenerateText.mockResolvedValue({
-      output: { severity: 'NOT_A_REAL_SEVERITY' },
-      finishReason: 'stop',
+    mockGenerateObject.mockResolvedValue({
+      object: { severity: 'NOT_A_REAL_SEVERITY' },
     });
     const { dbService } = makeDbMock(DEVICE, {});
     const service = new DiagnosticsService(dbService);
@@ -313,11 +317,7 @@ describe('DiagnosticsService', () => {
       recommendedAction: 'Dispatch a technician<b> to inspect cooling</b>.',
       requiresImmediateDispatch: true,
     };
-    mockGenerateText.mockResolvedValue({
-      output: proposal,
-      finishReason: 'stop',
-      steps: [],
-    });
+    mockGenerateObject.mockResolvedValue({ object: proposal });
 
     const { dbService, valuesMock } = makeDbMock(DEVICE, {
       id: 'fault-1',

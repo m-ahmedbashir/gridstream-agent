@@ -6,18 +6,11 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { ConfidenceFactorBreakdown, FaultDiagnosticWithDevice } from '@gridstream/shared';
+import type { ConfidenceFactorBreakdown } from '@gridstream/shared';
 import { TelemetryChart } from '@/features/devices/components/telemetry-chart';
 import { useDiagnosticQuery } from '../hooks/use-diagnostics';
-import { ANOMALY_KIND_LABEL, CONFIDENCE_VARIANT } from './columns';
+import { ANOMALY_KIND_LABEL, CONFIDENCE_COLOR, SEVERITY_COLOR, STATUS_COLOR } from './columns';
 import { DiagnosticActions } from './diagnostic-actions';
-
-const SEVERITY_VARIANT: Record<FaultDiagnosticWithDevice['severity'], 'outline' | 'secondary' | 'destructive'> = {
-  LOW: 'outline',
-  MEDIUM: 'secondary',
-  HIGH: 'destructive',
-  CRITICAL: 'destructive',
-};
 
 const CONFIDENCE_FACTOR_LABEL: Record<keyof ConfidenceFactorBreakdown, string> = {
   deviationStrength: 'Deviation strength',
@@ -50,10 +43,18 @@ export function DiagnosticDetail({ id }: { id: string }) {
             <CardHeader className='flex flex-row items-start justify-between'>
               <div className='space-y-2'>
                 <div className='flex items-center gap-2'>
-                  <Badge variant={SEVERITY_VARIANT[data.severity]}>{data.severity}</Badge>
-                  {data.requiresImmediateDispatch && <Badge variant='destructive'>Immediate dispatch</Badge>}
+                  <Badge variant='outline' className={SEVERITY_COLOR[data.severity]}>
+                    {data.severity}
+                  </Badge>
+                  {data.requiresImmediateDispatch && (
+                    <Badge variant='outline' className={STATUS_COLOR.danger}>
+                      Immediate dispatch
+                    </Badge>
+                  )}
                   {data.confidenceLabel != null && (
-                    <Badge variant={CONFIDENCE_VARIANT[data.confidenceLabel]}>{data.confidenceLabel} confidence ({data.confidenceScore}/100)</Badge>
+                    <Badge variant='outline' className={CONFIDENCE_COLOR[data.confidenceLabel]}>
+                      {data.confidenceLabel} confidence ({data.confidenceScore}/100)
+                    </Badge>
                   )}
                 </div>
                 <CardTitle className='text-xl'>{ANOMALY_KIND_LABEL[data.faultType]}</CardTitle>

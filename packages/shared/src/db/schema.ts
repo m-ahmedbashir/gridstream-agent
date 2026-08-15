@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, integer, jsonb, pgEnum, pgTable, real, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgEnum, pgTable, real, text, timestamp } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import {
@@ -70,19 +70,32 @@ export const deviceAssetsRelations = relations(deviceAssets, ({ many }) => ({
 
 // ── TelemetryLog ─────────────────────────────────────────────────────────────
 
-export const telemetryLogs = pgTable('telemetry_logs', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  deviceId: text('device_id')
-    .notNull()
-    .references(() => deviceAssets.id, { onDelete: 'cascade' }),
-  timestamp: timestamp('timestamp', { mode: 'date' }).notNull().defaultNow(),
-  // Nullable: not every device type reports every metric (e.g. a WALLBOX
-  // has no solarProductionKwh, a SOLAR-only site has no batterySoC).
-  solarProductionKwh: real('solar_production_kwh'),
-  batterySoC: real('battery_soc'),
-  batteryTempCelsius: real('battery_temp_celsius'),
-  gridVoltage: real('grid_voltage'),
-});
+export const telemetryLogs = pgTable(
+  'telemetry_logs',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    deviceId: text('device_id')
+      .notNull()
+      .references(() => deviceAssets.id, { onDelete: 'cascade' }),
+    timestamp: timestamp('timestamp', { mode: 'date' }).notNull().defaultNow(),
+    // Nullable: not every device type reports every metric (e.g. a WALLBOX
+    // has no solarProductionKwh, a SOLAR-only site has no batterySoC).
+    solarProductionKwh: real('solar_production_kwh'),
+    batterySoC: real('battery_soc'),
+    batteryTempCelsius: real('battery_temp_celsius'),
+    gridVoltage: real('grid_voltage'),
+  },
+  (table) => [
+    // Backs every telemetry query in the app — the chart, the diagnostic
+    // agent's historical-baseline lookup, and the queue consumer's anomaly
+    // check all filter by exactly this pair (equality on deviceId, range on
+    // timestamp). Was missing entirely (only the primary key was indexed);
+    // fine at today's per-device row counts, but this is the textbook
+    // composite index for an equality+range query and costs nothing to add
+    // now rather than after it matters.
+    index('telemetry_logs_device_id_timestamp_idx').on(table.deviceId, table.timestamp),
+  ],
+);
 
 export const telemetryLogsRelations = relations(telemetryLogs, ({ one }) => ({
   device: one(deviceAssets, { fields: [telemetryLogs.deviceId], references: [deviceAssets.id] }),

@@ -35,6 +35,25 @@ export function TelemetryChart({ deviceId, deviceType }: TelemetryChartProps) {
   const { data, isLoading, isError } = useDeviceTelemetryQuery(deviceId, 24);
   const isBattery = deviceType === 'BATTERY';
 
+  const chartData = (data?.items ?? []).map((reading) => ({
+    time: new Date(reading.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    batteryTempCelsius: reading.batteryTempCelsius,
+    gridVoltage: reading.gridVoltage,
+  }));
+  const threshold = isBattery ? THERMAL_RUNAWAY_TEMP_C : VOLTAGE_SAG_V;
+  const padding = isBattery ? 5 : 10;
+  // Computed as a plain [min, max] tuple, not a Recharts domain-callback —
+  // a function-based `domain` prop silently failed to expand past a
+  // threshold±padding fallback range in practice (axis stuck at [60, 70]
+  // while real readings spanned 21.6–82.4°C, clipping the entire series
+  // off-screen). Always includes the threshold itself so the ReferenceLine
+  // stays visible even if every reading in the window sits well clear of it.
+  const values = chartData
+    .map((d) => (isBattery ? d.batteryTempCelsius : d.gridVoltage))
+    .filter((v): v is number => v != null)
+    .concat(threshold);
+  const domain: [number, number] = [Math.min(...values) - padding, Math.max(...values) + padding];
+
   return (
     <Card>
       <CardHeader>
@@ -52,23 +71,36 @@ export function TelemetryChart({ deviceId, deviceType }: TelemetryChartProps) {
           <div className='text-destructive flex h-[250px] items-center justify-center text-sm'>
             Failed to load telemetry history.
           </div>
-        ) : data.items.length === 0 ? (
+        ) : chartData.length === 0 ? (
           <div className='text-muted-foreground flex h-[250px] items-center justify-center text-sm'>
             No telemetry history for this device yet.
           </div>
         ) : (
           <ChartContainer config={chartConfig} className='aspect-auto h-[250px] w-full'>
-            <AreaChart
-              data={data.items.map((reading) => ({
-                time: new Date(reading.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                batteryTempCelsius: reading.batteryTempCelsius,
-                gridVoltage: reading.gridVoltage,
-              }))}
-              margin={{ left: 12, right: 12 }}
-            >
+            <AreaChart data={chartData} margin={{ left: 12, right: 12 }}>
+              {/* `fill='var(--color-x)'` directly on <Area> rendered nothing in
+                  practice — Recharts emits `fill`/`stroke` as raw SVG
+                  presentation attributes, and `stroke='var(--color-x)'`
+                  resolves fine there but `fill` did not. The one other chart
+                  in this codebase (features/overview/area-graph.tsx) never
+                  puts a CSS var directly in `fill` either — it always goes
+                  through a <linearGradient>'s <stop stopColor>, which is
+                  inside a real stylesheet-processed <defs> block. Matching
+                  that exact, proven-working pattern here instead of guessing
+                  at another `fill='var(...)'` variant. */}
+              <defs>
+                <linearGradient id='fillBatteryTemp' x1='0' y1='0' x2='0' y2='1'>
+                  <stop offset='5%' stopColor='var(--color-batteryTempCelsius)' stopOpacity={0.4} />
+                  <stop offset='95%' stopColor='var(--color-batteryTempCelsius)' stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id='fillGridVoltage' x1='0' y1='0' x2='0' y2='1'>
+                  <stop offset='5%' stopColor='var(--color-gridVoltage)' stopOpacity={0.4} />
+                  <stop offset='95%' stopColor='var(--color-gridVoltage)' stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
               <CartesianGrid vertical={false} />
               <XAxis dataKey='time' tickLine={false} axisLine={false} tickMargin={8} minTickGap={32} />
-              <YAxis tickLine={false} axisLine={false} width={40} domain={isBattery ? undefined : [180, 250]} />
+              <YAxis tickLine={false} axisLine={false} width={40} domain={domain} />
               <ChartTooltip cursor={false} content={<ChartTooltipContent indicator='dot' />} />
               {isBattery ? (
                 <>
@@ -81,9 +113,9 @@ export function TelemetryChart({ deviceId, deviceType }: TelemetryChartProps) {
                   <Area
                     dataKey='batteryTempCelsius'
                     type='monotone'
-                    fill='var(--color-batteryTempCelsius)'
-                    fillOpacity={0.2}
+                    fill='url(#fillBatteryTemp)'
                     stroke='var(--color-batteryTempCelsius)'
+                    strokeWidth={2}
                   />
                 </>
               ) : (
@@ -97,9 +129,9 @@ export function TelemetryChart({ deviceId, deviceType }: TelemetryChartProps) {
                   <Area
                     dataKey='gridVoltage'
                     type='monotone'
-                    fill='var(--color-gridVoltage)'
-                    fillOpacity={0.2}
+                    fill='url(#fillGridVoltage)'
                     stroke='var(--color-gridVoltage)'
+                    strokeWidth={2}
                   />
                 </>
               )}

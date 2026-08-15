@@ -15,6 +15,13 @@
       "when": 1786820752321,
       "tag": "0001_narrow_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786823126140,
+      "tag": "0002_careless_speedball",
+      "breakpoints": true
     }
   ]
 }

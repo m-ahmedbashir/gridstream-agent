@@ -1,10 +1,4 @@
-import type { Tool } from 'ai';
-import { z } from 'zod';
-import {
-  anomalyKindSchema,
-  type AnomalyKind,
-  type DeviceAsset,
-} from '@gridstream/shared';
+import type { AnomalyKind, DeviceAsset } from '@gridstream/shared';
 
 /**
  * Stand-in for a real manufacturer fault-code documentation lookup (the
@@ -45,11 +39,19 @@ const FALLBACK_GUIDANCE =
 
 export interface HardwareManualLookup {
   guidance: string;
-  /** Whether a real device-type/symptom entry existed vs. the generic fallback — a confidence-scoring signal (diagnostic-confidence.ts), not shown to the model. */
+  /** Whether a real device-type/symptom entry existed vs. the generic fallback — a confidence-scoring signal (diagnostic-confidence.ts). */
   matched: boolean;
 }
 
-/** Pure lookup — trivially testable without the AI SDK. */
+/**
+ * Pure lookup, trivially testable. Called directly by
+ * DiagnosticsService.diagnose() with `symptom` set to the already-known
+ * deterministic `anomalyKind` — not offered to the model as an AI SDK tool
+ * with a `symptom` argument for it to fill in, since the model has no
+ * genuine choice to make here (the symptom is a known fact by the time
+ * diagnosis runs) — see the removed createGetHardwareManualTool() this file
+ * used to export.
+ */
 export function lookupHardwareManual(
   deviceType: DeviceAsset['deviceType'],
   symptom: AnomalyKind,
@@ -58,30 +60,4 @@ export function lookupHardwareManual(
   return guidance
     ? { guidance, matched: true }
     : { guidance: FALLBACK_GUIDANCE, matched: false };
-}
-
-/**
- * `deviceType` is closed over, same reasoning as getHistoricalBaseline's
- * `deviceId`. Async + lazy `import('ai')` for the same ESM/CommonJS reason
- * documented on that tool.
- */
-export async function createGetHardwareManualTool(
-  deviceType: DeviceAsset['deviceType'],
-): Promise<Tool<{ symptom: AnomalyKind }, string>> {
-  const { tool } = await import('ai');
-  return tool({
-    description:
-      "Looks up manufacturer troubleshooting guidance for this device's type and a given anomaly symptom.",
-    inputSchema: z.object({
-      symptom: anomalyKindSchema.describe(
-        'Which kind of anomaly is being diagnosed',
-      ),
-    }),
-    // Only the guidance text goes to the model — the tool's contract with
-    // the model is unchanged. `matched` is recovered separately by
-    // DiagnosticsService from this same pure function, called directly
-    // against the tool call's actual recorded input (see diagnose()).
-    execute: async ({ symptom }) =>
-      lookupHardwareManual(deviceType, symptom).guidance,
-  });
 }

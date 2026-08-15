@@ -82,10 +82,10 @@ The full loop works end to end: a telemetry anomaly triggers the diagnostic agen
 - A provider-agnostic AI model registry (`packages/ai-config/src/model-registry.ts`), shared by both apps — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
 - A real Redis/BullMQ telemetry ingestion pipeline, plus a simulator (off by default) generating plausible per-device readings with occasional injected anomalies — verified against a live Upstash instance, not just a mock
-- The diagnostic agent (`apps/api/src/modules/diagnostics/`) — investigates a safety-bound breach via tool calls, then emits a schema-validated `FaultDiagnostic` proposal. Verified end to end against a real LLM call, not just typechecked
-- The Active Alerts dashboard — a status-filtered queue of `FaultDiagnostic` records with Approve/Reject actions, and a Devices overview listing the fleet
+- The diagnostic agent (`apps/api/src/modules/diagnostics/`) — `faultType` is classified deterministically in TypeScript before the model ever runs (`classifyAnomaly()`), the historical baseline and manufacturer guidance are fetched deterministically too (not offered as skippable tool calls), and a single `generateObject()` call produces the rest of the diagnosis. A separate deterministic function (`diagnostic-confidence.ts`) scores how well-corroborated each diagnosis is — never the model's own self-reported confidence — from real signals (deviation magnitude, baseline sample depth, manufacturer-guidance match), and the full trace of what context the diagnosis was given is persisted alongside it. Verified end to end against a real LLM call, not just typechecked
+- The Active Alerts dashboard — a status-filtered queue of `FaultDiagnostic` records (severity + confidence badges, color-coded) with Approve/Reject actions, and a Devices overview listing the fleet
 - A **Simulate Chaos Event** button (Active Alerts page) — forces a real threshold-breaching reading through the same live queue the automatic simulator uses, for demoing the whole loop on demand instead of waiting on a timer
-- A per-alert detail page (`/dashboard/alerts/[id]`) with a telemetry chart (last 24h, safety threshold drawn in) for the device that triggered it — backed by a historical-data seed script (`pnpm db:seed:history`) so the chart has real data to show, not an empty graph
+- A per-alert detail page (`/dashboard/alerts/[id]`) with a telemetry chart (last 24h, safety threshold drawn in, Y-axis scaled to the real data), a confidence-factor breakdown, and a raw execution-trace viewer — backed by a historical-data seed script (`pnpm db:seed:history`) so the chart has real data to show, not an empty graph
 
 **What's not built yet:**
 - A dedicated device-detail page — clicking a device on the Devices list doesn't drill in yet; the telemetry chart currently only exists on the alert-detail page
@@ -110,28 +110,27 @@ flowchart TD
     end
 
     subgraph AgenticAI ["2. Diagnostic Agent (Vercel AI SDK)"]
-        THRESH -->|yes| AGENT["generateText() + tools<br/>(stopWhen: stepCountIs(3))"]
-        AGENT -->|tool call| BASELINE["getHistoricalBaseline()"]
-        AGENT -->|tool call| MANUAL["getHardwareManual()"]
-        BASELINE & MANUAL --> OUTPUT["Output.object()<br/>→ Zod-validated proposal"]
-        OUTPUT --> FD[("fault_diagnostics<br/>status: PENDING_APPROVAL")]
+        THRESH -->|"anomaly kind<br/>(deterministic, not the model's call)"| PREFETCH["Deterministic pre-fetch (TypeScript)<br/>getHistoricalBaseline() + getHardwareManual()"]
+        PREFETCH --> GEN["generateObject()<br/>(single call — the context above<br/>is given, not fetched via a tool<br/>the model could skip)"]
+        GEN --> CONF["computeDiagnosticConfidence()<br/>(deterministic score from real signals,<br/>never the model's own confidence)"]
+        CONF --> FD[("fault_diagnostics<br/>status: PENDING_APPROVAL<br/>+ confidence + execution trace")]
     end
 
     subgraph HITL ["3. Human-in-the-Loop Dashboard"]
         FD --> API["DiagnosticsController<br/>(ClerkAuthGuard)"]
-        API --> ALERTS["Active Alerts page<br/>(apps/web)"]
-        ALERTS --> DETAIL["Alert detail page<br/>+ telemetry chart<br/>(reads telemetry_logs)"]
+        API --> ALERTS["Active Alerts page<br/>(severity + confidence badges)"]
+        ALERTS --> DETAIL["Alert detail page<br/>+ telemetry chart + confidence breakdown<br/>+ raw execution trace"]
         DETAIL --> DECISION["Operator clicks<br/>Approve / Reject"]
         DECISION -->|atomic conditional update| FD
     end
 
     style THRESH fill:#b45309,color:#fff
-    style OUTPUT fill:#0891b2,color:#fff
+    style CONF fill:#0891b2,color:#fff
     style FD fill:#0891b2,color:#fff
     style DECISION fill:#15803d,color:#fff
 ```
 
-The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** `status` is always set deterministically by the service — `PENDING_APPROVAL` on creation, `APPROVED`/`REJECTED` only via an explicit operator action — never taken from the model's own output. A failed diagnosis (provider outage, no API key configured) is swallowed at the trigger boundary rather than failing the whole ingestion job, since the triggering telemetry reading is already persisted by that point and BullMQ would otherwise retry and duplicate it.
+The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** `faultType` is classified deterministically before the model runs; `confidenceScore`/`confidenceLabel` are computed deterministically after it runs, from real signals (deviation magnitude, historical sample depth, manufacturer-guidance match) — never the model's own self-reported certainty. `status` is always set deterministically by the service too — `PENDING_APPROVAL` on creation, `APPROVED`/`REJECTED` only via an explicit operator action — never taken from the model's own output. A failed diagnosis (provider outage, no API key configured) is swallowed at the trigger boundary rather than failing the whole ingestion job, since the triggering telemetry reading is already persisted by that point and BullMQ would otherwise retry and duplicate it.
 
 ---
 
@@ -165,11 +164,12 @@ The output schema (what the model must return) and any request/response DTOs liv
 ### Rules that don't bend
 
 - **One model registry, always, shared by both apps.** `packages/ai-config/src/model-registry.ts` is the only place a provider SDK gets imported — used by `apps/api`'s services and `apps/web`'s `/api/chat` route alike. A feature resolves a model through `resolveModel(key, apiKeyOverride?)` — never a second hardcoded provider client anywhere else.
-- **No tools needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema.
-- **Tools needed → `generateText()` with `tools`, not `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. When the agent has to investigate before answering, that's `generateText()` with `tools` and a bounded `stopWhen`.
-- **A tool-calling loop that must end in a structured decision → `output: Output.object({ schema })`, read `result.output`.** The AI SDK's native mechanism for "investigate freely via `tools`, then bind the final answer to a schema" — no manual JSON parsing, no malformed-response repair logic, no dummy tool needed to force a stop. See `diagnostics.service.ts`.
+- **A tool only earns a `tools` slot if the model must actually decide something.** `diagnostics.service.ts` originally offered `getHistoricalBaseline`/`getHardwareManual` as AI SDK tools inside a `generateText()` + tool-calling loop — but neither one involves a real decision (one takes no arguments at all; the other's only argument is already known deterministically before the call). A free/small model reliably took the shortcut of skipping both and answering anyway, writing a summary that *read* as if it had checked them. The fix wasn't to force the tool calls — it was to stop pretending there was a choice: both are now fetched directly in TypeScript and handed to the model as prompt context, and the whole call collapsed from up to three model round-trips into one. If a "tool" has no real branching left in it, it isn't a tool — it's just a function call that happens before you prompt the model.
+- **No tools needed → `generateObject()`.** Single-shot structured extraction, bound directly to a Zod schema. This is `diagnostics.service.ts`'s shape today, for the reason above.
+- **Tools genuinely needed → `generateText()` with `tools`, not `generateObject()`.** `generateObject()` has no tool-calling loop at all — it's single-shot only. Reach for this only when the model is choosing between real options for an open-ended problem, not as a default way to hand the model extra context.
+- **A tool-calling loop that must end in a structured decision → `output: Output.object({ schema })`, read `result.output`.** The AI SDK's native mechanism for "investigate freely via `tools`, then bind the final answer to a schema" — no manual JSON parsing, no malformed-response repair logic, no dummy tool needed to force a stop.
 - **Tools are a public interface, not a grab-bag.** Each tool does one clearly-named thing with a minimal, precisely-typed input. A vague or overloaded tool produces vague or wrong tool calls from the model. If the caller already knows a value for certain (which device this is), close over it when building the tool instead of asking the model to supply it.
-- **The model never computes a fact.** Financial estimates, severity thresholds, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript. The model writes prose around numbers it's handed, never numbers of its own.
+- **The model never computes a fact.** Financial estimates, severity thresholds, confidence/trust scores, anything that gets persisted or shown as ground truth is computed in deterministic TypeScript from real signals — never the model's own self-report. The model writes prose around numbers it's handed, never numbers of its own. See `diagnostic-confidence.ts`.
 - **Human-in-the-loop before anything consequential.** Any model output that would trigger a real-world action (a dispatch, an approval, an irreversible write) gets persisted in a pending state first, with that status set deterministically by the service — never taken from the model's own output. Nothing downstream executes without an explicit human action.
 
 ---

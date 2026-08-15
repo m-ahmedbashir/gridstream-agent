@@ -1,6 +1,4 @@
-import type { Tool } from 'ai';
 import { and, avg, count, eq, gte } from 'drizzle-orm';
-import { z } from 'zod';
 import { telemetryLogs } from '@gridstream/shared';
 import type { DbService } from '../../../common/db/db.service';
 
@@ -16,7 +14,13 @@ export interface HistoricalBaseline {
 
 /**
  * Pure(ish) query function — no NestJS DI, just a DbService instance — so
- * it's testable with a mocked DbService without touching the AI SDK or Nest.
+ * it's testable with a mocked DbService without touching Nest. Called
+ * directly by DiagnosticsService.diagnose() as deterministic pre-fetched
+ * context, not as an AI SDK tool the model chooses whether to call: there's
+ * no decision here for the model to usefully make (no arguments, the device
+ * is already known), so wrapping this in an agentic tool-calling loop would
+ * just be optional investigation the model could skip — see the removed
+ * createGetHistoricalBaselineTool() this file used to export.
  */
 export async function queryHistoricalBaseline(
   dbService: DbService,
@@ -57,31 +61,3 @@ export async function queryHistoricalBaseline(
   };
 }
 
-/**
- * `deviceId` is closed over (bound at tool-construction time, one tool
- * instance per diagnosis call) rather than an input the model supplies —
- * the calling service already knows definitively which device triggered
- * this diagnosis, so there's nothing for the model to usefully decide here.
- * Asking it for an ID it could get wrong would just be a way to introduce a
- * bug; a minimal, precisely-typed input means an empty one when the real
- * input is already known.
- *
- * Async, and imports `tool` from `'ai'` lazily inside — not a stylistic
- * choice, the same ESM/CommonJS reason as `model-registry.ts`'s
- * `resolveModel()`: `ai` v7 is ESM-only, `apps/api` compiles to CommonJS, so
- * a static `import { tool } from 'ai'` would crash the real backend at boot
- * (confirmed here first by `pnpm test` itself failing this exact way before
- * a compiled boot was even attempted).
- */
-export async function createGetHistoricalBaselineTool(
-  dbService: DbService,
-  deviceId: string,
-): Promise<Tool<Record<string, never>, HistoricalBaseline>> {
-  const { tool } = await import('ai');
-  return tool({
-    description:
-      "Returns this device's 24-hour rolling average telemetry (solar production, battery state of charge, battery temperature, grid voltage) so the triggering reading can be compared against its own recent normal behavior, not just the fixed safety thresholds.",
-    inputSchema: z.object({}),
-    execute: async () => queryHistoricalBaseline(dbService, deviceId),
-  });
-}

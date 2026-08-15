@@ -28,6 +28,10 @@ export function useDeviceTelemetryQuery(deviceId: string, hours = 24) {
       return apiFetch<DeviceTelemetryHistoryResponse>(`/devices/${deviceId}/telemetry?hours=${hours}`, { token });
     },
     enabled: Boolean(deviceId),
+    // Historical telemetry for a fixed past window doesn't go stale within
+    // a single viewing session — avoids a redundant refetch on every
+    // remount (e.g. navigating away and back) within 30s.
+    staleTime: 30_000,
   });
 }
 
