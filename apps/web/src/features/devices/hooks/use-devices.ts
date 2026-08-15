@@ -1,8 +1,8 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { useQuery } from '@tanstack/react-query';
-import type { DevicesListResponse } from '@gridstream/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { DeviceAsset, DevicesListResponse } from '@gridstream/shared';
 import { apiFetch } from '@/lib/api-client';
 
 export function useDevicesQuery() {
@@ -13,6 +13,38 @@ export function useDevicesQuery() {
     queryFn: async () => {
       const token = await getToken();
       return apiFetch<DevicesListResponse>('/devices?limit=100', { token });
+    },
+  });
+}
+
+interface ChaosEventResult {
+  deviceId: string;
+  deviceType: DeviceAsset['deviceType'];
+  serialNumber: string;
+}
+
+/**
+ * The "Simulate Chaos Event" dashboard button — enqueues a real,
+ * threshold-breaching reading (POST /telemetry/simulate-chaos) through the
+ * exact same Redis/BullMQ queue the automatic simulator uses. The mutation
+ * resolves as soon as the job is *enqueued*, not once the AI agent has
+ * actually finished diagnosing it (that takes a few seconds) — the delayed
+ * refetch below is what makes the resulting alert show up promptly instead
+ * of waiting on useDiagnosticsQuery's normal 15s poll.
+ */
+export function useSimulateChaosEventMutation() {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const token = await getToken();
+      return apiFetch<ChaosEventResult>('/telemetry/simulate-chaos', { token, method: 'POST' });
+    },
+    onSuccess: () => {
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['diagnostics'] });
+      }, 6000);
     },
   });
 }

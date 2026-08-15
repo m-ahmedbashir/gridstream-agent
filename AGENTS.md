@@ -29,12 +29,18 @@ SOLID at the file level, as you write, not as a retrofit:
 ```
 apps/api/                  NestJS backend (deployed to Railway)
   src/modules/<feature>/     one module per feature: *.controller.ts, *.module.ts, *.service.ts, tools/ (for an AI-calling feature — see "Building an AI feature")
-  src/modules/telemetry-ingestion/  no controller — a producer/consumer pair, not an HTTP feature.
-                                      telemetry-simulator.service.ts (producer, gated by TELEMETRY_SIMULATOR_ENABLED)
+  src/modules/telemetry-ingestion/  primarily a producer/consumer pair, not an HTTP feature — but does have
+                                      one controller (below), for a demo action, not real device ingestion.
+                                      telemetry-simulator.service.ts (producer, gated by TELEMETRY_SIMULATOR_ENABLED
+                                      for its automatic timer; simulateChaosEvent() is a separate, always-available
+                                      on-demand method the controller calls, forcing a real threshold-breaching
+                                      reading instead of leaving it to the normal 1-in-10 chance)
                                       + telemetry-queue.consumer.ts (BullMQ @Processor) + pure logic split into
                                       its own testable file per concern (telemetry-reading-generator.ts,
                                       telemetry-thresholds.ts) + ai-diagnostic-trigger.service.ts, which delegates
-                                      to DiagnosticsModule (below)
+                                      to DiagnosticsModule (below) + telemetry-ingestion.controller.ts (POST
+                                      /telemetry/simulate-chaos, ClerkAuthGuard — the "Simulate Chaos Event"
+                                      dashboard button, for demoing the pipeline without waiting on the timer)
   src/modules/diagnostics/          diagnostics.service.ts (generateText + tools + Output.object() for the
                                       final structured answer, see "Building an AI feature") + tools/get-
                                       historical-baseline.tool.ts (real DB aggregate query) + tools/get-
