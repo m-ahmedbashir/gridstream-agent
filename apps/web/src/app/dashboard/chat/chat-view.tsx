@@ -44,9 +44,9 @@ export function ChatView() {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const suggestions = [
-    "What maintenance measures are available?",
-    "How is confidence calculated?",
-    "What does plan approval do?"
+    'What triggers a fault diagnosis?',
+    'What do the severity levels mean?',
+    'Why does every alert need approval?'
   ];
 
   const handleSuggestionClick = async (suggestion: string) => {

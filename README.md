@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/m-ahmedbashir/gridstream-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/m-ahmedbashir/gridstream-agent/actions/workflows/ci.yml)
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
-![Node.js](https://img.shields.io/badge/node-%3E%3D%2018.0.0-brightgreen.svg)
+![Node.js](https://img.shields.io/badge/node-%3E%3D%2022.0.0-brightgreen.svg)
 ![pnpm](https://img.shields.io/badge/pnpm-%3E%3D%2010.0.0-orange.svg)
 ![TypeScript](https://img.shields.io/badge/typescript-latest-blue.svg)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -13,7 +13,7 @@
 
 - [System Architecture](#%EF%B8%8F-system-architecture)
 - [Where this project is right now](#-where-this-project-is-right-now)
-- [Target architecture](#-target-architecture)
+- [How a fault gets diagnosed and approved](#-how-a-fault-gets-diagnosed-and-approved)
 - [Building an AI feature here](#-building-an-ai-feature-here)
 - [Tech Stack](#-tech-stack)
 - [Repo Structure](#-repo-structure)
@@ -25,19 +25,19 @@
 
 ## 🏗️ System Architecture
 
-What's actually wired up today — not the target pipeline below, the real current components:
+The app-level wiring — auth, data access, the shared packages. See "How a fault gets diagnosed and approved" below for the actual telemetry→diagnosis→approval pipeline.
 
 ```mermaid
 flowchart LR
     U["👤 Operator"] --> UI
 
     subgraph Frontend["apps/web — Next.js 16"]
-        UI["Dashboard UI<br/>(Clerk-authenticated)"]
+        UI["Dashboard UI<br/>(Alerts, Devices — Clerk-authenticated)"]
         CHAT["/api/chat route<br/>(Route Handler)"]
     end
 
     subgraph Backend["apps/api — NestJS"]
-        API["REST API"]
+        API["DiagnosticsController /<br/>DevicesController<br/>(ClerkAuthGuard)"]
         DB_SVC["DbService<br/>(Drizzle ORM)"]
         CRYPTO["BYOK encryption<br/>(AES-256-GCM)"]
     end
@@ -48,9 +48,10 @@ flowchart LR
     PROVIDERS["Groq / OpenAI /<br/>Anthropic / OpenRouter"]
     CLERK["Clerk Auth"]
 
-    UI -->|Zod-typed requests| API
+    UI -->|Zod-typed requests<br/>+ bearer token| API
     UI -->|chat messages| CHAT
     UI -.->|session| CLERK
+    API -.->|verifies token| CLERK
     API --> DB_SVC --> PG
     API --> CRYPTO
     API -.->|imports| AI_CFG
@@ -67,67 +68,66 @@ flowchart LR
     style AI_CFG fill:#334155,color:#fff
 ```
 
-No `DeviceAsset`/`TelemetryLog`/ingestion queue exists in this diagram on purpose — see the next section for what's real today versus what's still ahead.
+The ingestion → diagnosis → approval pipeline behind this diagram is its own flow — see the next section.
 
 ---
 
 ## 📍 Where this project is right now
 
-`gridstream-agent` is early-stage: the foundation is built, the VPP domain itself is still being built on top of it.
+The full loop works end to end: a telemetry anomaly triggers the diagnostic agent, the agent produces a `FaultDiagnostic` sitting at `PENDING_APPROVAL`, and an operator can see it in the dashboard and approve or reject it.
 
 **What's live today:**
-- Clerk authentication on the frontend
+- Clerk authentication on the frontend; real backend session verification (`ClerkAuthGuard`, via `@clerk/backend`) on the two dashboard-facing controllers
 - A per-user settings model (model preference, BYOK provider key) backed by Postgres via Drizzle ORM
 - A provider-agnostic AI model registry (`packages/ai-config/src/model-registry.ts`), shared by both apps — swap Groq/OpenAI/Anthropic/OpenRouter without touching a single feature's code
 - AES-256-GCM encryption for user-supplied API keys
-- `DeviceAsset`/`TelemetryLog`/`FaultDiagnostic` tables, a Redis/BullMQ ingestion pipeline with a telemetry simulator (off by default), and the diagnostic agent (`apps/api/src/modules/diagnostics/`) that turns a safety-bound breach into a Zod-validated `FaultDiagnostic` sitting at `PENDING_APPROVAL`
+- A Redis/BullMQ telemetry ingestion pipeline with a simulator (off by default) generating plausible per-device readings, including occasional injected anomalies
+- The diagnostic agent (`apps/api/src/modules/diagnostics/`) — investigates a safety-bound breach via tool calls, then emits a schema-validated `FaultDiagnostic` proposal
+- The Active Alerts dashboard — a status-filtered queue of `FaultDiagnostic` records with Approve/Reject actions, and a Devices overview listing the fleet
 
-**What's still ahead:** the VPP dashboard — nothing yet reads `FaultDiagnostic` rows or lets an operator approve/reject one; `PENDING_APPROVAL` diagnostics currently just sit in the database. [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living log of what's been built stage-by-stage and what's still ahead — read it before assuming any domain feature exists.
+**What's not built yet:**
+- Telemetry charts / a device-detail view (drill into one device's history) — the Devices page is a flat list today
+- Severity-based auto-triage — every diagnosis goes to `PENDING_APPROVAL` regardless of severity; there's no "auto-log a routine ticket, only escalate CRITICAL ones" branch
+- Broader backend authorization — `ClerkAuthGuard` checks for *a* valid session, not role/permission (any authenticated user can approve/reject); no Postgres RLS
+- Frontend test coverage — the backend has extensive Jest coverage, the frontend has none yet
+
+[REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md) is the living, dated log of what's been built stage-by-stage — read it for the full history and reasoning behind each decision.
 
 ---
 
-## 🎯 Target architecture
-
-The intended end-to-end flow, once the remaining stages land (tracked in [REFACTOR_PROGRESS.md](REFACTOR_PROGRESS.md)) — this diagram describes the *plan*, not current behavior:
+## 🔄 How a fault gets diagnosed and approved
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion ["1. High-Throughput Ingestion"]
-        A["⚡ Smart Meters & Solar Assets"] -->|HTTP / WebSockets| B["NestJS Ingestion Service"]
-        B -->|Publish Telemetry| C[("Redis / BullMQ Queue")]
+    subgraph Ingestion ["1. Telemetry Ingestion"]
+        SIM["TelemetrySimulatorService<br/>(off by default)"] -->|enqueue reading| Q[("Redis / BullMQ<br/>telemetry queue")]
+        Q --> CONSUMER["TelemetryQueueConsumer"]
+        CONSUMER -->|insert| TL[("telemetry_logs")]
+        CONSUMER --> THRESH{"Anomaly?<br/>(battery temp > 65°C |<br/>grid voltage < 200V)"}
     end
 
-    subgraph Processing ["2. Time-Series Storage & Rules"]
-        C -->|Batch Worker| D[("PostgreSQL Time-Series")]
-        C -->|Threshold Check| E{"Anomaly Detected?<br/>(Temp > 65°C | Voltage Sag)"}
-        E -->|No| F["Save to Baseline"]
-        E -->|Yes| G["Trigger AI Diagnostic Service"]
+    subgraph AgenticAI ["2. Diagnostic Agent (Vercel AI SDK)"]
+        THRESH -->|yes| AGENT["generateText() + tools<br/>(stopWhen: stepCountIs(3))"]
+        AGENT -->|tool call| BASELINE["getHistoricalBaseline()"]
+        AGENT -->|tool call| MANUAL["getHardwareManual()"]
+        BASELINE & MANUAL --> OUTPUT["Output.object()<br/>→ Zod-validated proposal"]
+        OUTPUT --> FD[("fault_diagnostics<br/>status: PENDING_APPROVAL")]
     end
 
-    subgraph AgenticAI ["3. Vercel AI SDK Diagnostic Agent"]
-        G --> H["🤖 Agentic Tool Loop (maxSteps: 3)"]
-        H -->|Tool Call| I["getHistoricalBaseline()"]
-        H -->|Tool Call| J["getHardwareManual()"]
-        I & J --> K["Strict Zod Validation<br/>(FaultDiagnosticSchema)"]
+    subgraph HITL ["3. Human-in-the-Loop Dashboard"]
+        FD --> API["DiagnosticsController<br/>(ClerkAuthGuard)"]
+        API --> ALERTS["Active Alerts page<br/>(apps/web)"]
+        ALERTS --> DECISION["Operator clicks<br/>Approve / Reject"]
+        DECISION -->|atomic conditional update| FD
     end
 
-    subgraph HITL ["4. Operations & Human-in-the-Loop"]
-        K --> L{"High Severity / Field Dispatch?"}
-        L -->|No| M["Auto-Log System Ticket"]
-        L -->|Yes| N["🟡 status: PENDING_APPROVAL"]
-        N --> O["👤 Operator clicks Approve in dashboard"]
-        O --> P["🚚 Dispatch service technician"]
-    end
-
-    style A fill:#1d4ed8,color:#fff
-    style C fill:#7c3aed,color:#fff
-    style D fill:#0891b2,color:#fff
-    style G fill:#0891b2,color:#fff
-    style K fill:#b45309,color:#fff
-    style P fill:#15803d,color:#fff
+    style THRESH fill:#b45309,color:#fff
+    style OUTPUT fill:#0891b2,color:#fff
+    style FD fill:#0891b2,color:#fff
+    style DECISION fill:#15803d,color:#fff
 ```
 
-The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** Severity thresholds, financial estimates, and pass/fail safety checks are deterministic TypeScript; the model's job is qualitative diagnosis and tool orchestration only.
+The load-bearing constraint end to end: **the model never computes a number that gets acted on, and nothing consequential executes without a human clicking Approve.** `status` is always set deterministically by the service — `PENDING_APPROVAL` on creation, `APPROVED`/`REJECTED` only via an explicit operator action — never taken from the model's own output. A failed diagnosis (provider outage, no API key configured) is swallowed at the trigger boundary rather than failing the whole ingestion job, since the triggering telemetry reading is already persisted by that point and BullMQ would otherwise retry and duplicate it.
 
 ---
 
@@ -173,10 +173,11 @@ The output schema (what the model must return) and any request/response DTOs liv
 ## 🛠 Tech Stack
 
 - **Backend:** NestJS, PostgreSQL via **Drizzle ORM** (`drizzle-orm` + `pg` — not Prisma)
+- **Queue:** Redis + BullMQ for telemetry ingestion
 - **AI:** Vercel AI SDK, routed through a provider-agnostic model registry (Groq, OpenAI, Anthropic, OpenRouter) shared by both apps via `packages/ai-config`
 - **Frontend:** Next.js 16 (App Router), Clerk auth, Tailwind CSS, shadcn/ui, TanStack Query
 - **Validation:** Zod, shared between both apps via `packages/shared`
-- **Auth:** Clerk (frontend-only — no backend session/RBAC layer yet)
+- **Auth:** Clerk on the frontend always; real backend session verification (`ClerkAuthGuard`, via `@clerk/backend`) on the Diagnostics/Devices controllers — other backend endpoints still trust an unverified client-supplied ID, no Postgres RLS anywhere
 - **Security:** AES-256-GCM for user-supplied (BYOK) provider API keys
 - **Workspaces/Tooling:** pnpm, Turborepo, GitHub Actions
 
@@ -187,20 +188,30 @@ The output schema (what the model must return) and any request/response DTOs liv
 ```text
 gridstream-agent/
 ├── .github/
-│   └── workflows/ci.yml        # typecheck + test on every push/PR
+│   └── workflows/ci.yml        # typecheck + test + build on every push/PR
 ├── apps/
-│   ├── web/                    # Next.js frontend — dashboard shell, Clerk auth, chat assistant
+│   ├── web/                    # Next.js frontend
+│   │   └── src/
+│   │       ├── lib/api-client.ts       # apiFetch() — the only fetch() to apps/api, attaches a Clerk bearer token
+│   │       ├── features/diagnostics/   # Active Alerts queue — hooks, columns, approve/reject actions
+│   │       ├── features/devices/       # Devices overview (read-only)
+│   │       └── app/dashboard/          # routes: overview, alerts, devices, chat, ...
 │   └── api/                    # NestJS backend
 │       ├── drizzle.config.ts     # drizzle-kit config
 │       ├── drizzle/              # generated SQL migrations — append-only
 │       └── src/
 │           ├── common/
-│           │   ├── db/           # Drizzle schema.ts + DbService (pg Pool + Drizzle instance)
-│           │   └── crypto/       # BYOK AES-256-GCM encryption
+│           │   ├── db/           # DbService (pg Pool + Drizzle instance, bound to packages/shared's tables)
+│           │   ├── crypto/       # BYOK AES-256-GCM encryption
+│           │   └── auth/         # ClerkAuthGuard + @ClerkUserId() — verifies a Clerk session server-side
 │           └── modules/
-│               └── users/        # Clerk-linked settings, BYOK key management
+│               ├── users/        # Clerk-linked settings, BYOK key management
+│               ├── telemetry-ingestion/  # BullMQ producer/consumer, telemetry simulator
+│               ├── diagnostics/  # the diagnostic agent + DiagnosticsController (list/approve/reject)
+│               └── devices/      # DevicesController — read-only device-asset listing
 ├── packages/
 │   ├── shared/                  # @gridstream/shared — Zod schemas + types, shared by both apps
+│   │                              (src/db/schema.ts is the single source of truth for every table)
 │   └── ai-config/                # @gridstream/ai-config — model-registry.ts, the only place a provider
 │                                  # SDK is imported; server-side-only, shared by both apps
 ├── AGENTS.md                    # rules for any coding agent working in this repo
@@ -240,22 +251,23 @@ cd apps/api
 cp .env.example .env
 ```
 
-Set `OPENROUTER_API_KEY` (free, no card required, from [openrouter.ai](https://openrouter.ai)) and `DATABASE_URL` (your PostgreSQL connection string).
+Set `OPENROUTER_API_KEY` (free, no card required, from [openrouter.ai](https://openrouter.ai)) and `DATABASE_URL` (your PostgreSQL connection string). `CLERK_SECRET_KEY` is required for the Active Alerts / Devices endpoints to work at all (`ClerkAuthGuard` fails closed without it) — use the same key from your Clerk dashboard as the frontend below. `FRONTEND_URL` controls CORS and defaults to the local Next.js dev server, so it's optional unless you're running the frontend on a different port.
 
-**Frontend (`apps/web/.env`):**
+**Frontend (`apps/web/.env`, copied from `env.example.txt`):**
 
 ```bash
 cd apps/web
-cp .env.example .env
+cp env.example.txt .env
 ```
 
-Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` from your Clerk dashboard.
+Leave the Clerk keys empty to use Clerk's keyless dev mode, or populate `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` from your Clerk dashboard. `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:3001`) points the dashboard at the backend.
 
 ### Database
 
 ```bash
-pnpm db:generate    # generate SQL migrations from apps/api/src/common/db/schema.ts
+pnpm db:generate    # generate SQL migrations from packages/shared/src/db/schema.ts
 pnpm db:migrate      # apply them to DATABASE_URL
+pnpm db:seed         # seed one demo DeviceAsset per device type
 ```
 
 ### Running Locally
@@ -272,6 +284,7 @@ pnpm dev:backend
 ```bash
 pnpm test           # all workspaces — same command CI runs
 pnpm run typecheck  # tsc --noEmit across every workspace
+pnpm build           # nest build + next build — also runs in CI, catches things typecheck alone doesn't
 ```
 
 ---
@@ -281,7 +294,7 @@ pnpm run typecheck  # tsc --noEmit across every workspace
 - **Frontend (Vercel):** Build: `pnpm build --filter=@gridstream/web`
 - **Backend (Railway):** Build: `pnpm build --filter=@gridstream/api`
 
-(This is separate from the [CI workflow](.github/workflows/ci.yml) above, which typechecks and tests every push/PR — it doesn't deploy anything.)
+(This is separate from the [CI workflow](.github/workflows/ci.yml) above, which typechecks, tests, and builds every push/PR — it doesn't deploy anything.)
 
 ---
 

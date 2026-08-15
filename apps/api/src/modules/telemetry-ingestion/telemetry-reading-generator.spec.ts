@@ -59,4 +59,14 @@ describe('generateReading()', () => {
 
     expect(reading.batteryTempCelsius).toBeLessThan(THERMAL_RUNAWAY_TEMP_C);
   });
+
+  it('forceAnomaly guarantees an anomaly even when the roll would not have triggered one', () => {
+    // random() calls: gridVoltage, batterySoC, batteryTempCelsius — then no anomaly-check
+    // roll at all (forceAnomaly short-circuits the `||` before it's evaluated), then the
+    // thermal-runaway magnitude roll.
+    const random = sequence(0.5, 0.5, 0.5, 0.9);
+    const reading = generateReading({ id: 'device-7', deviceType: 'BATTERY' }, random, true);
+
+    expect(reading.batteryTempCelsius).toBeGreaterThan(THERMAL_RUNAWAY_TEMP_C);
+  });
 });

@@ -21,10 +21,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        env:
-          # prisma generate (runs via postinstall) needs a syntactically valid
-          # DATABASE_URL but never connects to it — no real database needed for CI.
-          DATABASE_URL: postgresql://user:pass@localhost:5432/db
 
       - name: Typecheck
         run: pnpm run typecheck
@@ -33,3 +29,6 @@ jobs:
         run: pnpm test
         env:
           GROQ_API_KEY: test-key-not-used-tests-mock-the-sdk
+
+      - name: Build
+        run: pnpm build

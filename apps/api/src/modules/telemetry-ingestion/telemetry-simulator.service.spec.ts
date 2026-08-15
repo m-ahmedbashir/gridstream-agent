@@ -89,4 +89,40 @@ describe('TelemetrySimulatorService', () => {
 
         expect(queue.add).not.toHaveBeenCalled();
     });
+
+    describe('simulateChaosEvent()', () => {
+        it('enqueues a forced-anomalous reading for a device and returns its identity', async () => {
+            const queue = makeQueueMock();
+            const dbService = makeDbMock([{ id: 'device-1', deviceType: 'BATTERY', serialNumber: 'X-1' } as any]);
+            const service = new TelemetrySimulatorService(queue, dbService);
+
+            const result = await service.simulateChaosEvent();
+
+            expect(queue.add).toHaveBeenCalledTimes(1);
+            const [, enqueuedReading] = queue.add.mock.calls[0];
+            expect(enqueuedReading.deviceId).toBe('device-1');
+            expect(enqueuedReading.batteryTempCelsius).toBeGreaterThan(65); // forced anomaly, not left to chance
+            expect(result).toEqual({ deviceId: 'device-1', deviceType: 'BATTERY', serialNumber: 'X-1' });
+        });
+
+        it('works even when the automatic simulator is disabled — this is an explicit manual trigger', async () => {
+            delete process.env.TELEMETRY_SIMULATOR_ENABLED;
+            const queue = makeQueueMock();
+            const dbService = makeDbMock([{ id: 'device-1', deviceType: 'SOLAR', serialNumber: 'X-2' } as any]);
+            const service = new TelemetrySimulatorService(queue, dbService);
+
+            await service.simulateChaosEvent();
+
+            expect(queue.add).toHaveBeenCalledTimes(1);
+        });
+
+        it('throws NotFoundException when there are no devices to target', async () => {
+            const queue = makeQueueMock();
+            const dbService = makeDbMock([]);
+            const service = new TelemetrySimulatorService(queue, dbService);
+
+            await expect(service.simulateChaosEvent()).rejects.toThrow('No devices to simulate a chaos event for');
+            expect(queue.add).not.toHaveBeenCalled();
+        });
+    });
 });

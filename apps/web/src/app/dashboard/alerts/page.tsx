@@ -1,5 +1,6 @@
 import PageContainer from '@/components/layout/page-container';
 import { DiagnosticsListing } from '@/features/diagnostics/components/diagnostics-listing';
+import { ChaosEventButton } from '@/features/devices/components/chaos-event-button';
 
 export const metadata = {
   title: 'Dashboard: Active Alerts',
@@ -11,6 +12,7 @@ export default function Page() {
       scrollable={false}
       pageTitle='Active Alerts'
       pageDescription='Fault diagnoses awaiting human review before any dispatch action is taken.'
+      pageHeaderAction={<ChaosEventButton />}
     >
       {/* DiagnosticsListing is a client component managing its own loading
           state via TanStack Query — no <Suspense> boundary here, since a

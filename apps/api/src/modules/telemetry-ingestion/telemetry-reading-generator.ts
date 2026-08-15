@@ -21,8 +21,17 @@ export interface SimulatableDevice {
  * Pure — no I/O, no DI — so it's testable without touching Redis, Postgres,
  * or Nest's DI container. `random` is injectable purely for deterministic
  * tests; production callers just use the default `Math.random`.
+ *
+ * `forceAnomaly` skips the probability roll entirely and always applies the
+ * anomaly branch — used by the "Simulate Chaos Event" manual trigger
+ * (TelemetrySimulatorService.simulateChaosEvent()), where the whole point is
+ * a guaranteed anomaly on demand, not a 1-in-10 chance.
  */
-export function generateReading(device: SimulatableDevice, random: () => number = Math.random): NewTelemetryLog {
+export function generateReading(
+  device: SimulatableDevice,
+  random: () => number = Math.random,
+  forceAnomaly = false,
+): NewTelemetryLog {
   const reading: NewTelemetryLog = {
     deviceId: device.id,
     timestamp: new Date(),
@@ -41,7 +50,7 @@ export function generateReading(device: SimulatableDevice, random: () => number 
     reading.batteryTempCelsius = roundTo(20 + random() * 15, 1); // 20-35°C normal
   }
 
-  const isAnomaly = random() < ANOMALY_PROBABILITY;
+  const isAnomaly = forceAnomaly || random() < ANOMALY_PROBABILITY;
   if (isAnomaly) {
     if (device.deviceType === 'BATTERY') {
       // Thermal runaway: push well past the 65°C threshold.
