@@ -161,6 +161,18 @@ ${JSON.stringify(
     return faultDiagnosticSelectSchema.parse(inserted);
   }
 
+  /** The detail-page counterpart to listDiagnostics() — one row, device joined. */
+  async getDiagnosticById(id: string): Promise<FaultDiagnosticWithDevice> {
+    const found = await this.dbService.db.query.faultDiagnostics.findFirst({
+      where: eq(faultDiagnostics.id, id),
+      with: { device: true },
+    });
+    if (!found) {
+      throw new NotFoundException(`FaultDiagnostic ${id} not found`);
+    }
+    return faultDiagnosticWithDeviceSchema.parse(found);
+  }
+
   /**
    * The Stage 6 HITL surface: list FaultDiagnostics (optionally filtered by
    * status) with their DeviceAsset joined, newest first. Uses Drizzle's

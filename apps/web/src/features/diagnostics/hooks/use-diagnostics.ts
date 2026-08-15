@@ -2,7 +2,7 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DiagnosticsListResponse, FaultDiagnostic } from '@gridstream/shared';
+import type { DiagnosticsListResponse, FaultDiagnostic, FaultDiagnosticWithDevice } from '@gridstream/shared';
 import { apiFetch } from '@/lib/api-client';
 
 const DIAGNOSTICS_QUERY_KEY = 'diagnostics';
@@ -21,6 +21,19 @@ export function useDiagnosticsQuery(status?: FaultDiagnostic['status']) {
     // No websocket/queue-to-frontend infra exists — polling is the honest
     // simple option for near-live updates on a human-review queue.
     refetchInterval: 15_000,
+  });
+}
+
+/** The alert-detail page — one diagnostic, device joined. */
+export function useDiagnosticQuery(id: string) {
+  const { getToken } = useAuth();
+
+  return useQuery({
+    queryKey: [DIAGNOSTICS_QUERY_KEY, 'detail', id],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiFetch<FaultDiagnosticWithDevice>(`/diagnostics/${id}`, { token });
+    },
   });
 }
 

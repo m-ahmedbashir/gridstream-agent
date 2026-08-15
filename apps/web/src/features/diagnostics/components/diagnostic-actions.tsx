@@ -21,6 +21,9 @@ export function DiagnosticActions({ diagnostic }: { diagnostic: FaultDiagnosticW
     );
   }
 
+  // When rendered inside a clickable table row (DiagnosticsListing), stop
+  // these clicks from also triggering row navigation to the detail page.
+
   const loading = approveMutation.isPending || rejectMutation.isPending;
 
   const onConfirm = async () => {
@@ -41,7 +44,7 @@ export function DiagnosticActions({ diagnostic }: { diagnostic: FaultDiagnosticW
   };
 
   return (
-    <>
+    <div onClick={(event) => event.stopPropagation()}>
       <AlertModal
         isOpen={pendingAction !== null}
         onClose={() => setPendingAction(null)}
@@ -56,6 +59,6 @@ export function DiagnosticActions({ diagnostic }: { diagnostic: FaultDiagnosticW
           <IconX className='mr-1 h-4 w-4' /> Reject
         </Button>
       </div>
-    </>
+    </div>
   );
 }

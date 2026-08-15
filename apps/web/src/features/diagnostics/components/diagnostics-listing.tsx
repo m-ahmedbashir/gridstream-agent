@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getCoreRowModel, getPaginationRowModel, useReactTable } from '@tanstack/react-table';
-import type { FaultDiagnostic } from '@gridstream/shared';
+import type { FaultDiagnostic, FaultDiagnosticWithDevice } from '@gridstream/shared';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
@@ -19,6 +20,7 @@ const TABS: { value: StatusFilter; label: string }[] = [
 ];
 
 export function DiagnosticsListing() {
+  const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('PENDING_APPROVAL');
   const { data, isLoading, isError, error } = useDiagnosticsQuery(statusFilter === 'ALL' ? undefined : statusFilter);
 
@@ -52,7 +54,10 @@ export function DiagnosticsListing() {
           Failed to load alerts: {error instanceof Error ? error.message : 'Unknown error'}
         </div>
       ) : (
-        <DataTable table={table} />
+        <DataTable
+          table={table}
+          onRowClick={(row: FaultDiagnosticWithDevice) => router.push(`/dashboard/alerts/${row.id}`)}
+        />
       )}
     </div>
   );

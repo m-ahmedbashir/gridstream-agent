@@ -171,6 +171,27 @@ const FAULT_ROW = {
     approvedBy: null,
 };
 
+describe('DiagnosticsService.getDiagnosticById()', () => {
+    it('returns the diagnostic with its device joined', async () => {
+        const findFirstMock = jest.fn().mockResolvedValue({ ...FAULT_ROW, device: DEVICE_WITH_TIMESTAMPS() });
+        const dbService = { db: { query: { faultDiagnostics: { findFirst: findFirstMock } } } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        const result = await service.getDiagnosticById('fault-1');
+
+        expect(result.id).toBe('fault-1');
+        expect(result.device.serialNumber).toBe('X-1');
+    });
+
+    it('throws NotFoundException when the diagnostic does not exist', async () => {
+        const findFirstMock = jest.fn().mockResolvedValue(undefined);
+        const dbService = { db: { query: { faultDiagnostics: { findFirst: findFirstMock } } } } as unknown as DbService;
+        const service = new DiagnosticsService(dbService);
+
+        await expect(service.getDiagnosticById('missing')).rejects.toThrow('not found');
+    });
+});
+
 describe('DiagnosticsService.listDiagnostics()', () => {
     it('returns each diagnostic with its device joined, plus a total count', async () => {
         const findManyMock = jest.fn().mockResolvedValue([{ ...FAULT_ROW, device: DEVICE_WITH_TIMESTAMPS() }]);

@@ -59,3 +59,42 @@ describe('DevicesService.listDevices()', () => {
         expect(selectWhereMock).toHaveBeenCalledWith(undefined);
     });
 });
+
+function makeTelemetryDbMock(device: Record<string, unknown> | undefined, readings: Record<string, unknown>[]) {
+    // First db.select() call in the method: the device existence check — .from().where() resolves directly.
+    const deviceWhereMock = jest.fn().mockResolvedValue(device ? [device] : []);
+    const deviceFromMock = jest.fn().mockReturnValue({ where: deviceWhereMock });
+
+    // Second db.select() call: the telemetry query — .from().where().orderBy() resolves.
+    const orderByMock = jest.fn().mockResolvedValue(readings);
+    const telemetryWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
+    const telemetryFromMock = jest.fn().mockReturnValue({ where: telemetryWhereMock });
+
+    const selectMock = jest
+        .fn()
+        .mockReturnValueOnce({ from: deviceFromMock })
+        .mockReturnValueOnce({ from: telemetryFromMock });
+
+    const dbService = { db: { select: selectMock } } as unknown as DbService;
+    return { dbService, telemetryWhereMock };
+}
+
+describe('DevicesService.getDeviceTelemetryHistory()', () => {
+    it('returns the readings, oldest first, once the device is confirmed to exist', async () => {
+        const readings = [{ id: 'log-1', deviceId: 'device-1', timestamp: new Date(), batteryTempCelsius: 25 }];
+        const { dbService } = makeTelemetryDbMock(DEVICE_ROW, readings);
+        const service = new DevicesService(dbService);
+
+        const result = await service.getDeviceTelemetryHistory('device-1', 24);
+
+        expect(result.items).toEqual(readings);
+    });
+
+    it('throws NotFoundException when the device does not exist, without querying telemetry_logs', async () => {
+        const { dbService, telemetryWhereMock } = makeTelemetryDbMock(undefined, []);
+        const service = new DevicesService(dbService);
+
+        await expect(service.getDeviceTelemetryHistory('missing-device', 24)).rejects.toThrow('not found');
+        expect(telemetryWhereMock).not.toHaveBeenCalled();
+    });
+});

@@ -29,6 +29,11 @@ export class DiagnosticsController {
     return this.diagnosticsService.listDiagnostics(parsed.data);
   }
 
+  @Get(':id')
+  async getById(@Param('id') id: string) {
+    return this.diagnosticsService.getDiagnosticById(id);
+  }
+
   @Patch(':id/approve')
   async approve(@Param('id') id: string, @ClerkUserId() clerkUserId: string) {
     return this.diagnosticsService.approve(id, clerkUserId);
